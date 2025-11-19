@@ -30,6 +30,9 @@
 #include "instruction.h"
 #include "util/span.h"
 
+uint64_t global_sync_epoch = 0;
+bool llc_print_status = false;
+
 std::chrono::seconds elapsed_time();
 
 constexpr long long STAT_PRINTING_PERIOD = 10000000;
@@ -111,6 +114,9 @@ void O3_CPU::initialize_instruction()
       std::min(FETCH_WIDTH, champsim::bandwidth::maximum_type{static_cast<long>(IFETCH_BUFFER_SIZE - std::size(IFETCH_BUFFER))})};
 
   bool stop_fetch = false;
+  if(this->is_draining_pipeline)
+    stop_fetch = true;
+
   while (current_time >= fetch_resume_time && instrs_to_read_this_cycle.has_remaining() && !stop_fetch && !std::empty(input_queue)) {
     instrs_to_read_this_cycle.consume();
 
@@ -234,6 +240,23 @@ void O3_CPU::do_check_dib(ooo_model_instr& instr)
 
 long O3_CPU::fetch_instruction()
 {
+  if(2*(this->sync_barrier_epoch) > global_sync_epoch) {
+    return 1;
+  }
+
+  if(this->is_draining_pipeline) {
+    bool rob_empty = std::empty(ROB);
+    if (rob_empty) {
+      fmt::print("CPU{} draining done cycle: {}\n", cpu, current_time.time_since_epoch() / clock_period);
+      this->is_draining_pipeline = false;
+      if(cpu == 1)
+        llc_print_status = true;
+    } else {
+      // fmt::print("CPU{} draining cycle: {}\n", cpu, current_time.time_since_epoch() / clock_period);
+      return 1;
+    }
+  }
+
   long progress{0};
 
   // Fetch a single cache line
@@ -248,6 +271,16 @@ long O3_CPU::fetch_instruction()
 
   auto l1i_req_begin = std::find_if(std::begin(IFETCH_BUFFER), std::end(IFETCH_BUFFER), fetch_ready);
   for (champsim::bandwidth l1i_bw{L1I_BANDWIDTH}; l1i_bw.has_remaining() && l1i_req_begin != std::end(IFETCH_BUFFER); l1i_bw.consume()) {
+    if(l1i_req_begin->ip.to<uint64_t>() == 0xFFFFFFFFFFFFFFFF) {
+      fmt::print("CPU {} Magic marker found at cycle {}\n", cpu, current_time.time_since_epoch() / clock_period);
+      l1i_req_begin = IFETCH_BUFFER.erase(l1i_req_begin);
+      ++progress;
+      this->sync_barrier_epoch++;
+      global_sync_epoch++;
+      this->is_draining_pipeline = true;
+      fmt::print("CPU{} epoch {} global epoch {}\n", cpu, this->sync_barrier_epoch, global_sync_epoch);
+      continue;
+    }
     auto l1i_req_end = std::adjacent_find(l1i_req_begin, std::end(IFETCH_BUFFER), no_match_ip);
     if (l1i_req_end != std::end(IFETCH_BUFFER)) {
       l1i_req_end = std::next(l1i_req_end); // adjacent_find returns the first of the non-equal elements

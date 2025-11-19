@@ -47,6 +47,8 @@
 #include "util/to_underlying.h" // for to_underlying
 #include "waitable.h"
 
+extern bool llc_print_status;
+
 class CACHE : public champsim::operable
 {
   enum [[deprecated(

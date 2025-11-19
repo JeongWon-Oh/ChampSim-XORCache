@@ -24,6 +24,8 @@
 #include <stdlib.h>
 #include <string.h>
 #include <string>
+#include <cstring>
+#include <cstdio>
 
 #include "../../inc/trace_instruction.h"
 #include "pin.H"
@@ -39,6 +41,8 @@ UINT64 instrCount = 0;
 std::ofstream outfile;
 
 trace_instr_format_t curr_instr;
+
+BOOL is_tracing_active = false;
 
 /* ===================================================================== */
 // Command line switches
@@ -73,6 +77,16 @@ INT32 Usage()
 // Analysis routines
 /* ===================================================================== */
 
+VOID StartTrace() {
+  is_tracing_active = true;
+  std::cout << "[Pintool] Starting trace at main function." << std::endl;
+}
+
+VOID StopTrace() {
+  is_tracing_active = false;
+  std::cout << "[Pintool] Stopping trace after main function." << std::endl;
+}
+
 void ResetCurrentInstruction(VOID* ip)
 {
   curr_instr = {};
@@ -82,7 +96,8 @@ void ResetCurrentInstruction(VOID* ip)
 BOOL ShouldWrite()
 {
   ++instrCount;
-  return (instrCount > KnobSkipInstructions.Value()) && (instrCount <= (KnobTraceInstructions.Value() + KnobSkipInstructions.Value()));
+  // return (instrCount > KnobSkipInstructions.Value()) && (instrCount <= (KnobTraceInstructions.Value() + KnobSkipInstructions.Value()));
+  return is_tracing_active;
 }
 
 void WriteCurrentInstruction()
@@ -110,9 +125,64 @@ void WriteToSet(T* begin, T* end, UINT32 r)
 // Instrumentation callbacks
 /* ===================================================================== */
 
+VOID Routine(RTN rtn, VOID *v)
+{
+  // 추가: Pin이 발견하는 모든 함수의 이름을 출력합니다.
+    // std::cout << "[Pintool] Found Routine: " << RTN_Name(rtn) << std::endl;
+
+
+    const std::string rtn_name = RTN_Name(rtn);
+
+    // "start_trace" 함수를 찾으면 StartTrace 분석 함수를 삽입합니다.
+    if (rtn_name == "start_trace") {
+        // std::cout << "[Pintool] Found 'start_trace' trigger. Instrumenting..." << std::endl;
+        RTN_Open(rtn);
+        RTN_InsertCall(rtn, IPOINT_BEFORE, (AFUNPTR)StartTrace, IARG_END);
+        RTN_Close(rtn);
+    }
+
+    // "end_trace" 함수를 찾으면 StopTrace 분석 함수를 삽입합니다.
+    if (rtn_name == "end_trace") {
+        // std::cout << "[Pintool] Found 'end_trace' trigger. Instrumenting..." << std::endl;
+        RTN_Open(rtn);
+        RTN_InsertCall(rtn, IPOINT_BEFORE, (AFUNPTR)StopTrace, IARG_END);
+        RTN_Close(rtn);
+    }
+}
+
+VOID WriteMagicMarker()
+{
+  trace_instr_format_t magic_marker;
+  memset(&magic_marker, 0xFF, sizeof(trace_instr_format_t));
+
+  // 기존과 동일하게 outfile에 씁니다.
+  typename decltype(outfile)::char_type buf[sizeof(trace_instr_format_t)];
+  std::memcpy(buf, &magic_marker, sizeof(trace_instr_format_t));
+  outfile.write(buf, sizeof(trace_instr_format_t));
+  
+  instrCount++;
+}
+
 // Is called for every instruction and instruments reads and writes
 VOID Instruction(INS ins, VOID* v)
 {
+  // 1. INS_IsCPUID를 Opcode 비교로 수정
+  if (INS_Opcode(ins) == XED_ICLASS_CPUID) {
+    INS prev_ins = INS_Prev(ins);
+    if (INS_Valid(prev_ins) && INS_Opcode(prev_ins) == XED_ICLASS_MOV &&
+      INS_OperandIsReg(prev_ins, 0) && INS_OperandReg(prev_ins, 0) == REG_EAX &&
+      INS_OperandIsImmediate(prev_ins, 1) && (ADDRINT)INS_OperandImmediate(prev_ins, 1) == 0xDEADBEEF) {
+
+      // 매직 시퀀스가 맞다면, 실제 액션을 수행할 함수를 등록합니다.
+      // 이 함수는 CPUID가 실행될 때마다 호출됩니다 (Execution Time).
+      INS_InsertCall(ins, IPOINT_BEFORE, (AFUNPTR)WriteMagicMarker, IARG_END);
+
+      // 이 명령어는 매직 마커 전용이므로,
+      // 아래의 일반적인 명령어 처리 로직을 타지 않도록 여기서 종료합니다.
+      return;
+    }
+  }
+  
   // begin each instruction with this function
   INS_InsertCall(ins, IPOINT_BEFORE, (AFUNPTR)ResetCurrentInstruction, IARG_INST_PTR, IARG_END);
 
@@ -177,11 +247,15 @@ int main(int argc, char* argv[])
   if (PIN_Init(argc, argv))
     return Usage();
 
+  PIN_InitSymbols();
+
   outfile.open(KnobOutputFile.Value().c_str(), std::ios_base::binary | std::ios_base::trunc);
   if (!outfile) {
     std::cout << "Couldn't open output trace file. Exiting." << std::endl;
     exit(1);
   }
+
+  RTN_AddInstrumentFunction(Routine, 0);
 
   // Register function to be called to instrument instructions
   INS_AddInstrumentFunction(Instruction, 0);

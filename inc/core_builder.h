@@ -35,6 +35,7 @@ namespace detail
 {
 struct core_builder_base {
   uint32_t m_cpu{};
+  uint64_t m_sync_barrier_epoch{};
   champsim::chrono::picoseconds m_clock_period{250};
   std::size_t m_dib_set{1};
   std::size_t m_dib_way{1};

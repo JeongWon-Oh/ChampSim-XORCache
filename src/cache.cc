@@ -414,6 +414,21 @@ auto CACHE::initiate_tag_check(champsim::channel* ul)
 
 long CACHE::operate()
 {
+  if(llc_print_status && NAME == "LLC" && cpu == 1) {
+    std::vector<long> sets_to_check = {10, 21};
+    for (long set_idx : sets_to_check) {
+        fmt::print("===== CPU{} Cache Set {} Status at Cycle {} =====\n", cpu, set_idx, current_time.time_since_epoch() / clock_period);
+        auto set_begin = std::next(std::begin(this->block), set_idx * this->NUM_WAY);
+        auto set_end = std::next(set_begin, this->NUM_WAY);
+        int way = 0;
+        for (auto block_it = set_begin; block_it != set_end; ++block_it) {
+            fmt::print("  [Way {}] Valid: {}, Address: 0x{:x} V_Address: 0x{:x} data: {}\n", way, block_it->valid, block_it->address.to<uint64_t>(), block_it->v_address.to<uint64_t>(), block_it->data);
+            way++;
+        }
+    }
+    llc_print_status = false;
+  }
+
   long progress{0};
 
   auto is_ready = [time = current_time](const auto& entry) {
