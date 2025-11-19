@@ -121,6 +121,57 @@ void WriteToSet(T* begin, T* end, UINT32 r)
   *found_reg = r;
 }
 
+// Write (Destination) Operation
+void WriteToSet_Dest(ADDRINT addr, UINT32 size)
+{
+    unsigned long long data = 0;
+    // 메모리 크기가 8바이트 이하인 경우에만 캡처 (1 word 단위)
+    if (size > 0 && size <= sizeof(data)) {
+        // addr에서 size만큼 읽어 data에 안전하게 복사
+        PIN_SafeCopy(&data, (void*)addr, size);
+    }
+    
+    // 이전에 정의한 템플릿 함수 WriteToSet_MemAddrAndData의 역할 수행
+    // WriteToSet_MemAddrAndData<unsigned long long int> 호출 로직을 인라인화
+    
+    unsigned long long int* addr_begin = curr_instr.destination_memory;
+    unsigned long long int* addr_end = curr_instr.destination_memory + NUM_INSTR_DESTINATIONS;
+    unsigned long long int* data_begin = curr_instr.destination_data;
+    
+    auto set_end = std::find(addr_begin, addr_end, 0);
+    auto found_addr = std::find(addr_begin, set_end, addr); 
+
+    if (found_addr == set_end && set_end != addr_end) {
+        *set_end = addr;
+        std::size_t index = std::distance(addr_begin, set_end);
+        *(data_begin + index) = data;
+    }
+}
+
+// Read (Source) Operation
+void WriteToSet_Source(ADDRINT addr, UINT32 size)
+{
+    unsigned long long data = 0;
+    if (size > 0 && size <= sizeof(data)) {
+        PIN_SafeCopy(&data, (void*)addr, size);
+    }
+
+    // 이전에 정의한 템플릿 함수 WriteToSet_MemAddrAndData의 역할 수행
+    // WriteToSet_MemAddrAndData<unsigned long long int> 호출 로직을 인라인화
+
+    unsigned long long int* addr_begin = curr_instr.source_memory;
+    unsigned long long int* addr_end = curr_instr.source_memory + NUM_INSTR_SOURCES;
+    unsigned long long int* data_begin = curr_instr.source_data;
+
+    auto set_end = std::find(addr_begin, addr_end, 0);
+    auto found_addr = std::find(addr_begin, set_end, addr); 
+
+    if (found_addr == set_end && set_end != addr_end) {
+        *set_end = addr;
+        std::size_t index = std::distance(addr_begin, set_end);
+        *(data_begin + index) = data;
+    }
+}
 /* ===================================================================== */
 // Instrumentation callbacks
 /* ===================================================================== */
@@ -211,12 +262,22 @@ VOID Instruction(INS ins, VOID* v)
 
   // Iterate over each memory operand of the instruction.
   for (UINT32 memOp = 0; memOp < memOperands; memOp++) {
+    // 1. 메모리 접근 크기를 먼저 계산합니다.
+    UINT32 memSize = INS_MemoryOperandSize(ins, memOp);
+    
+    // 2. Load Operation (Read)
     if (INS_MemoryOperandIsRead(ins, memOp))
-      INS_InsertCall(ins, IPOINT_BEFORE, (AFUNPTR)WriteToSet<unsigned long long int>, IARG_PTR, curr_instr.source_memory, IARG_PTR,
-                     curr_instr.source_memory + NUM_INSTR_SOURCES, IARG_MEMORYOP_EA, memOp, IARG_END);
+      INS_InsertCall(ins, IPOINT_BEFORE, (AFUNPTR)WriteToSet_Source, 
+                     IARG_MEMORYOP_EA, memOp, 
+                     IARG_UINT32, memSize,     // 계산된 크기를 UINT32 타입으로 전달
+                     IARG_END);
+                     
+    // 3. Store Operation (Write)
     if (INS_MemoryOperandIsWritten(ins, memOp))
-      INS_InsertCall(ins, IPOINT_BEFORE, (AFUNPTR)WriteToSet<unsigned long long int>, IARG_PTR, curr_instr.destination_memory, IARG_PTR,
-                     curr_instr.destination_memory + NUM_INSTR_DESTINATIONS, IARG_MEMORYOP_EA, memOp, IARG_END);
+      INS_InsertCall(ins, IPOINT_BEFORE, (AFUNPTR)WriteToSet_Dest, 
+                     IARG_MEMORYOP_EA, memOp, 
+                     IARG_UINT32, memSize,      // 계산된 크기를 UINT32 타입으로 전달
+                     IARG_END);
   }
 
   // finalize each instruction with this function

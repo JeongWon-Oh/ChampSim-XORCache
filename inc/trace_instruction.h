@@ -46,6 +46,9 @@ struct input_instr {
 
   unsigned long long destination_memory[NUM_INSTR_DESTINATIONS]; // output memory
   unsigned long long source_memory[NUM_INSTR_SOURCES];           // input memory
+
+  unsigned long long destination_data[NUM_INSTR_DESTINATIONS];
+  unsigned long long source_data[NUM_INSTR_SOURCES];
 };
 
 struct cloudsuite_instr {
