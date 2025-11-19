@@ -1,0 +1,90 @@
+--- Instruction 1 ---
+  IP: 0x55d21ce03189
+  Src Regs: 54 45 
+  Dst Regs: 
+--- Instruction 2 ---
+  IP: 0x55d21ce0318d
+  Src Regs: 5 6 
+  Dst Regs: 6 
+  Dst Mem: [Addr] 0x7ffd460b84e0 
+           [Data] 0x7ffd460b8510 
+--- Instruction 3 ---
+  IP: 0x55d21ce0318e
+  Src Regs: 6 
+  Dst Regs: 5 
+--- Instruction 4 ---
+  IP: 0x55d21ce03191
+  Src Regs: 
+  Dst Regs: 
+--- Instruction 5 ---
+  IP: 0x55d21ce03192
+  Src Regs: 6 
+  Dst Regs: 5 6 
+  Src Mem: [Addr] 0x7ffd460b84e0 
+           [Data] 0x7ffd460b8510 
+--- Instruction 6 ---
+  IP: 0x55d21ce03193
+  Src Regs: 6 
+  Dst Regs: 26 6 
+  Src Mem: [Addr] 0x7ffd460b84e8 
+           [Data] 0x55d21ce03215 
+--- Instruction 7 ---
+  IP: 0x55d21ce03215
+  Src Regs: 26 
+  Dst Regs: 10 
+  Src Mem: [Addr] 0x55d21ce06040 
+           [Data] 0xcafebabedeadbeef 
+--- Instruction 8 ---
+  IP: 0x55d21ce0321c
+  Src Regs: 5 10 
+  Dst Regs: 
+  Dst Mem: [Addr] 0x7ffd460b8500 
+           [Data] 0x7ffd460b8510 
+--- Instruction 9 ---
+  IP: 0x55d21ce03220
+  Src Regs: 26 
+  Dst Regs: 10 
+  Src Mem: [Addr] 0x55d21ce06048 
+           [Data] 0xcafebabedeadbef0 
+--- Instruction 10 ---
+  IP: 0x55d21ce03227
+  Src Regs: 5 10 
+  Dst Regs: 
+  Dst Mem: [Addr] 0x7ffd460b8508 
+           [Data] 0x7ffd460b8510 
+--- Instruction 11 ---
+  IP: 0x55d21ce0322b
+  Src Regs: 
+  Dst Regs: 10 
+--- Instruction 12 ---
+  IP: 0x55d21ce03235
+  Src Regs: 26 10 
+  Dst Regs: 
+  Dst Mem: [Addr] 0x55d21ce06060 
+           [Data] 0xdeadbeefcafebabe 
+--- Instruction 13 ---
+  IP: 0x55d21ce0323c
+  Src Regs: 
+  Dst Regs: 10 
+--- Instruction 14 ---
+  IP: 0x55d21ce03246
+  Src Regs: 26 10 
+  Dst Regs: 
+  Dst Mem: [Addr] 0x55d21ce06068 
+           [Data] 0xdeadbeefcafebabf 
+--- Instruction 15 ---
+  IP: 0x55d21ce0324d
+  Src Regs: 
+  Dst Regs: 56 
+--- Instruction 16 ---
+  IP: 0x55d21ce03252
+  Src Regs: 26 6 
+  Dst Regs: 26 6 
+  Dst Mem: [Addr] 0x7ffd460b84e8 
+           [Data] 0x7ffd460b84f0 
+
+파싱 완료!
+========================================
+  총 읽어들인 명령어 수: 16
+  발견된 매직 마커 수: 0
+========================================

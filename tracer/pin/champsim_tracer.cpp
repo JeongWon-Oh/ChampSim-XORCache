@@ -172,6 +172,25 @@ void WriteToSet_Source(ADDRINT addr, UINT32 size)
         *(data_begin + index) = data;
     }
 }
+
+void WriteToSet_Dest_From_Reg(ADDRINT addr, uint64_t val)
+{
+    unsigned long long int* addr_begin = curr_instr.destination_memory;
+    unsigned long long int* addr_end = curr_instr.destination_memory + NUM_INSTR_DESTINATIONS;
+    unsigned long long int* data_begin = curr_instr.destination_data;
+    
+    // 메모리 주소 배열에서 빈 공간을 찾습니다.
+    auto set_end = std::find(addr_begin, addr_end, 0);
+    auto found_addr = std::find(addr_begin, set_end, addr); 
+
+    if (found_addr == set_end && set_end != addr_end) {
+        *set_end = addr;
+        std::size_t index = std::distance(addr_begin, set_end);
+        
+        // 레지스터 값을 Store 데이터로 기록합니다.
+        *(data_begin + index) = val;
+    }
+}
 /* ===================================================================== */
 // Instrumentation callbacks
 /* ===================================================================== */
@@ -273,11 +292,24 @@ VOID Instruction(INS ins, VOID* v)
                      IARG_END);
                      
     // 3. Store Operation (Write)
-    if (INS_MemoryOperandIsWritten(ins, memOp))
-      INS_InsertCall(ins, IPOINT_BEFORE, (AFUNPTR)WriteToSet_Dest, 
-                     IARG_MEMORYOP_EA, memOp, 
-                     IARG_UINT32, memSize,      // 계산된 크기를 UINT32 타입으로 전달
-                     IARG_END);
+    if (INS_MemoryOperandIsWritten(ins, memOp)) {
+        // Store 명령의 소스 레지스터를 반복하여 캡처합니다.
+        UINT32 readRegCount = INS_MaxNumRRegs(ins);
+        
+        for (UINT32 i = 0; i < readRegCount; i++) {
+            REG src_reg = INS_RegR(ins, i); // i번째 소스 레지스터
+
+            // --- 중요: REG_is_gr() 함수를 사용하여 범용 레지스터만 필터링합니다. ---
+            if (REG_is_gr(src_reg)) {
+                // Store 명령의 메모리 쓰기 주소는 IARG_MEMORYOP_EA로 전달하고,
+                // 데이터는 IARG_REG_VALUE로 전달합니다.
+                INS_InsertCall(ins, IPOINT_BEFORE, (AFUNPTR)WriteToSet_Dest_From_Reg, 
+                               IARG_MEMORYOP_EA, memOp,      // 유효 주소를 실행 시점에 계산하여 전달
+                               IARG_REG_VALUE, src_reg,      // GPR의 실제 값 (데이터)
+                               IARG_END);
+            }
+        }
+    }
   }
 
   // finalize each instruction with this function
