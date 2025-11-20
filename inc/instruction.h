@@ -125,6 +125,9 @@ struct ooo_model_instr : champsim::program_ordered<ooo_model_instr> {
   std::vector<champsim::address> destination_memory = {};
   std::vector<champsim::address> source_memory = {};
 
+  std::array<uint64_t, NUM_INSTR_DESTINATIONS> destination_data = {}; // Dst Data (Store Data)
+  std::array<uint64_t, NUM_INSTR_SOURCES> source_data = {}; // Src Data (Load Data)
+
   // these are indices of instructions in the ROB that depend on me
   std::vector<std::reference_wrapper<ooo_model_instr>> registers_instrs_depend_on_me;
 
@@ -140,6 +143,9 @@ private:
 
     auto smem_end = std::remove(std::begin(instr.source_memory), std::end(instr.source_memory), uint64_t{0});
     std::transform(std::begin(instr.source_memory), smem_end, std::back_inserter(this->source_memory), [](auto x) { return champsim::address{x}; });
+
+    std::copy(std::begin(instr.destination_data), std::end(instr.destination_data), std::begin(this->destination_data));
+    std::copy(std::begin(instr.source_data), std::end(instr.source_data), std::begin(this->source_data));
 
     bool writes_sp = std::count(std::begin(destination_registers), std::end(destination_registers), champsim::REG_STACK_POINTER);
     bool writes_ip = std::count(std::begin(destination_registers), std::end(destination_registers), champsim::REG_INSTRUCTION_POINTER);

@@ -1,9 +1,9 @@
 {
-  "executable_name": "champsim",
+  "executable_name": "single",
   "block_size": 64,
   "page_size": 131072,
   "heartbeat_frequency": 10000000,
-  "num_cores": 2,
+  "num_cores": 1,
 
   "ooo_cpu": [
     {

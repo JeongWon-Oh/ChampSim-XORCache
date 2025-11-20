@@ -8,8 +8,11 @@ bin/
 
 core
 
+*.txt
 **/*.o
 **/*.d
+**/*.trace
+**/*.txt
 
 test/000-test-main
 

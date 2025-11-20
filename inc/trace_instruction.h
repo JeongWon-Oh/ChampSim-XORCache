@@ -65,6 +65,9 @@ struct cloudsuite_instr {
   unsigned long long destination_memory[NUM_INSTR_DESTINATIONS_SPARC]; // output memory
   unsigned long long source_memory[NUM_INSTR_SOURCES];                 // input memory
 
+  unsigned long long destination_data[NUM_INSTR_DESTINATIONS];
+  unsigned long long source_data[NUM_INSTR_SOURCES];
+
   unsigned char asid[2];
 };
 // NOLINTEND(cppcoreguidelines-avoid-c-arrays,modernize-avoid-c-arrays)
