@@ -66,6 +66,8 @@ class CACHE : public champsim::operable
     champsim::address ip;
     uint64_t instr_id;
 
+    uint64_t data_value = 0;
+
     uint32_t pf_metadata;
     uint32_t cpu;
 
@@ -92,6 +94,8 @@ public:
     champsim::address v_address;
     champsim::address ip;
     uint64_t instr_id;
+
+    uint64_t data_value = 0;
 
     struct returned_value {
       champsim::address data;
@@ -332,6 +336,8 @@ public:
   CACHE& operator=(const CACHE&) = delete;
   CACHE& operator=(CACHE&&);
 };
+
+long get_word_index(champsim::address address);
 
 template <typename... Ps>
 void CACHE::prefetcher_module_model<Ps...>::impl_prefetcher_initialize()

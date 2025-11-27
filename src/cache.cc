@@ -94,13 +94,15 @@ auto CACHE::operator=(CACHE&& other) -> CACHE&
 
 CACHE::tag_lookup_type::tag_lookup_type(const request_type& req, bool local_pref, bool skip)
     : address(req.address), v_address(req.v_address), data(req.data), ip(req.ip), instr_id(req.instr_id), pf_metadata(req.pf_metadata), cpu(req.cpu),
-      type(req.type), prefetch_from_this(local_pref), skip_fill(skip), is_translated(req.is_translated), instr_depend_on_me(req.instr_depend_on_me)
+      type(req.type), prefetch_from_this(local_pref), skip_fill(skip), is_translated(req.is_translated), instr_depend_on_me(req.instr_depend_on_me),
+      data_value(req.data_value)
 {
 }
 
 CACHE::mshr_type::mshr_type(const tag_lookup_type& req, champsim::chrono::clock::time_point _time_enqueued)
     : address(req.address), v_address(req.v_address), ip(req.ip), instr_id(req.instr_id), cpu(req.cpu), type(req.type),
-      prefetch_from_this(req.prefetch_from_this), time_enqueued(_time_enqueued), instr_depend_on_me(req.instr_depend_on_me), to_return(req.to_return)
+      prefetch_from_this(req.prefetch_from_this), time_enqueued(_time_enqueued), instr_depend_on_me(req.instr_depend_on_me), to_return(req.to_return),
+      data_value(req.data_value)
 {
 }
 
@@ -115,6 +117,12 @@ CACHE::mshr_type CACHE::mshr_type::merge(mshr_type predecessor, mshr_type succes
                  std::back_inserter(merged_return));
 
   mshr_type retval{(successor.type == access_type::PREFETCH) ? predecessor : successor};
+
+  if (successor.type != access_type::PREFETCH) {
+      retval.data_value = successor.data_value;
+  } else {
+      retval.data_value = predecessor.data_value;
+  }
 
   // set the time enqueued to the predecessor unless its a demand into prefetch, in which case we use the successor
   retval.time_enqueued =
@@ -147,6 +155,8 @@ auto CACHE::fill_block(mshr_type mshr, uint32_t metadata) -> BLOCK
   to_fill.address = mshr.address;
   to_fill.v_address = mshr.v_address;
   to_fill.data = mshr.data_promise->data;
+  long w_index = get_word_index(mshr.address);
+  to_fill.data_cache_line[w_index] = mshr.data_promise->data.to<uint64_t>();
   to_fill.pf_metadata = metadata;
 
   return to_fill;
@@ -194,7 +204,8 @@ bool CACHE::handle_fill(const mshr_type& fill_mshr)
 
     writeback_packet.cpu = fill_mshr.cpu;
     writeback_packet.address = way->address;
-    writeback_packet.data = way->data;
+    // writeback_packet.data = way->data;
+    writeback_packet.data = champsim::address{way->data_cache_line[get_word_index(way->address)]};
     writeback_packet.instr_id = fill_mshr.instr_id;
     writeback_packet.ip = champsim::address{};
     writeback_packet.type = access_type::WRITE;
@@ -232,6 +243,13 @@ bool CACHE::handle_fill(const mshr_type& fill_mshr)
     }
 
     *way = fill_block(fill_mshr, metadata_thru);
+    if (fill_mshr.type == access_type::WRITE) {
+      long w_index = get_word_index(fill_mshr.address);
+      way->data_cache_line[w_index] = fill_mshr.data_value;
+    } else if (fill_mshr.type == access_type::LOAD) {
+      long w_index = get_word_index(fill_mshr.address);
+      way->data_cache_line[w_index] = fill_mshr.data_value;
+    }
   }
 
   // COLLECT STATS
@@ -239,7 +257,7 @@ bool CACHE::handle_fill(const mshr_type& fill_mshr)
     sim_stats.total_miss_latency_cycles += (current_time - (fill_mshr.time_enqueued + clock_period)) / clock_period;
   sim_stats.mshr_return.increment(std::pair{fill_mshr.type, fill_mshr.cpu});
 
-  response_type response{fill_mshr.address, fill_mshr.v_address, fill_mshr.data_promise->data, metadata_thru, fill_mshr.instr_depend_on_me};
+  response_type response{fill_mshr.address, fill_mshr.v_address, fill_mshr.data_promise->data, fill_mshr.data_value, metadata_thru, fill_mshr.instr_depend_on_me};
   for (auto* ret : fill_mshr.to_return) {
     ret->push_back(response);
   }
@@ -282,12 +300,21 @@ bool CACHE::try_hit(const tag_lookup_type& handle_pkt)
   if (hit) {
     sim_stats.hits.increment(std::pair{handle_pkt.type, handle_pkt.cpu});
 
-    response_type response{handle_pkt.address, handle_pkt.v_address, way->data, metadata_thru, handle_pkt.instr_depend_on_me};
+    uint64_t response_data = way->data_cache_line[get_word_index(handle_pkt.address)];
+    response_type response{handle_pkt.address, handle_pkt.v_address, way->data, response_data, metadata_thru, handle_pkt.instr_depend_on_me};
+    // response_type response{handle_pkt.address, handle_pkt.v_address, way->data, metadata_thru, handle_pkt.instr_depend_on_me};
     for (auto* ret : handle_pkt.to_return) {
       ret->push_back(response);
     }
 
     way->dirty |= (handle_pkt.type == access_type::WRITE);
+    if (handle_pkt.type == access_type::WRITE) {
+      long w_index = get_word_index(handle_pkt.address);
+      way->data_cache_line[w_index] = handle_pkt.data_value;
+    } else if (handle_pkt.type == access_type::LOAD) {
+      long w_index = get_word_index(handle_pkt.address);
+      way->data_cache_line[w_index] = handle_pkt.data_value;
+    }
 
     // update prefetch stats and reset prefetch bit
     if (useful_prefetch) {
@@ -420,19 +447,50 @@ auto CACHE::initiate_tag_check(champsim::channel* ul)
 
 long CACHE::operate()
 {
-  if(llc_print_status && NAME == "LLC" && cpu == 1) {
-    std::vector<long> sets_to_check = {10, 21};
+  // if(llc_print_status && NAME == "LLC" && cpu == 1) {
+  //   std::vector<long> sets_to_check = {10, 21};
+  //   for (long set_idx : sets_to_check) {
+  //       fmt::print("===== CPU{} Cache Set {} Status at Cycle {} =====\n", cpu, set_idx, current_time.time_since_epoch() / clock_period);
+  //       auto set_begin = std::next(std::begin(this->block), set_idx * this->NUM_WAY);
+  //       auto set_end = std::next(set_begin, this->NUM_WAY);
+  //       int way = 0;
+  //       for (auto block_it = set_begin; block_it != set_end; ++block_it) {
+  //           fmt::print("  [Way {}] Valid: {}, Address: 0x{:x} V_Address: 0x{:x} data: {}\n", way, block_it->valid, block_it->address.to<uint64_t>(), block_it->v_address.to<uint64_t>(), block_it->data);
+  //           way++;
+  //       }
+  //   }
+  //   llc_print_status = false;
+  // }
+  // if(NAME == "cpu0_L1D" || NAME == "cpu0_L2C" || NAME == "LLC") {
+  if(NAME == "cpu0_L1D") {
+    std::vector<long> sets_to_check = {0};
     for (long set_idx : sets_to_check) {
-        fmt::print("===== CPU{} Cache Set {} Status at Cycle {} =====\n", cpu, set_idx, current_time.time_since_epoch() / clock_period);
+        fmt::print("===== CPU{} {} Cache Set {} Status at Cycle {} =====\n", cpu, NAME, set_idx, current_time.time_since_epoch() / clock_period);
         auto set_begin = std::next(std::begin(this->block), set_idx * this->NUM_WAY);
         auto set_end = std::next(set_begin, this->NUM_WAY);
         int way = 0;
         for (auto block_it = set_begin; block_it != set_end; ++block_it) {
-            fmt::print("  [Way {}] Valid: {}, Address: 0x{:x} V_Address: 0x{:x} data: {}\n", way, block_it->valid, block_it->address.to<uint64_t>(), block_it->v_address.to<uint64_t>(), block_it->data);
-            way++;
+            fmt::print("  [Way {}] Valid: {}, Address: 0x{:x} V_Address: 0x{:x} data: {} cache_line: [{}]\n",
+    way,
+    block_it->valid,
+    block_it->address.to<uint64_t>(),
+    block_it->v_address.to<uint64_t>(),
+    block_it->data,
+    // --- 여기서부터 수정 ---
+    [&]() {
+        std::string res;
+        for (size_t i = 0; i < 8; ++i) {
+            // 각 요소를 16진수 문자열로 변환하여 이어 붙임
+            res += fmt::format("{:#018x}", block_it->data_cache_line[i]);
+            if (i < 7) res += ", ";
         }
+        return res;
+    }() // <--- 람다를 즉시 실행하여 결과 문자열(std::string)을 리턴받음
+    // -----------------------
+);
+        way++;
+      }
     }
-    llc_print_status = false;
   }
 
   long progress{0};
@@ -544,6 +602,11 @@ long CACHE::operate()
   }
 
   return progress + fill_bw.amount_consumed() + initiate_tag_bw.amount_consumed() + tag_check_bw.amount_consumed();
+}
+
+long get_word_index(champsim::address address) 
+{
+  return address.slice(champsim::dynamic_extent{champsim::data::bits{6}, champsim::data::bits{3}}).to<long>(); 
 }
 
 // LCOV_EXCL_START exclude deprecated function

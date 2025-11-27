@@ -53,6 +53,7 @@ class channel
     bool forward_checked = false;
     bool is_translated = true;
     bool response_requested = true;
+    uint64_t data_value = 0;
 
     uint8_t asid[2] = {std::numeric_limits<uint8_t>::max(), std::numeric_limits<uint8_t>::max()};
     access_type type{access_type::LOAD};
@@ -73,14 +74,15 @@ class channel
     champsim::address address{};
     champsim::address v_address{};
     champsim::address data{};
+    uint64_t data_value = 0;
     uint32_t pf_metadata = 0;
     std::vector<uint64_t> instr_depend_on_me{};
 
-    response(champsim::address addr, champsim::address v_addr, champsim::address data_, uint32_t pf_meta, std::vector<uint64_t> deps)
-        : address(addr), v_address(v_addr), data(data_), pf_metadata(pf_meta), instr_depend_on_me(deps)
+    response(champsim::address addr, champsim::address v_addr, champsim::address data_, uint64_t d_val, uint32_t pf_meta, std::vector<uint64_t> deps)
+        : address(addr), v_address(v_addr), data(data_), data_value(d_val), pf_metadata(pf_meta), instr_depend_on_me(deps)
     {
     }
-    explicit response(request req) : response(req.address, req.v_address, req.data, req.pf_metadata, req.instr_depend_on_me) {}
+    explicit response(request req) : response(req.address, req.v_address, req.data, req.data_value, req.pf_metadata, req.instr_depend_on_me) {}
   };
 
   template <typename R>
