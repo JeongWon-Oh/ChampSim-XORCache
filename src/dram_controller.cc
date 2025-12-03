@@ -111,7 +111,7 @@ long DRAM_CHANNEL::operate()
   if (warmup) {
     for (auto& entry : RQ) {
       if (entry.has_value()) {
-        response_type response{entry->address, entry->v_address, entry->data, 0, entry->pf_metadata, entry->instr_depend_on_me};
+        response_type response{entry->address, entry->v_address, entry->data, entry->data_value, entry->data_cache_line, entry->pf_metadata, entry->instr_depend_on_me};
         for (auto* ret : entry.value().to_return) {
           ret->push_back(response);
         }
@@ -146,7 +146,7 @@ long DRAM_CHANNEL::finish_dbus_request()
 
   if (active_request != std::end(bank_request) && active_request->ready_time <= current_time) {
     response_type response{active_request->pkt->value().address, active_request->pkt->value().v_address, active_request->pkt->value().data, active_request->pkt->value().data_value,
-                           active_request->pkt->value().pf_metadata, active_request->pkt->value().instr_depend_on_me};
+                           active_request->pkt->value().data_cache_line, active_request->pkt->value().pf_metadata, active_request->pkt->value().instr_depend_on_me};
     for (auto* ret : active_request->pkt->value().to_return) {
       ret->push_back(response);
     }
@@ -452,7 +452,7 @@ void DRAM_CHANNEL::check_read_collision()
       };
       // write forward
       if (auto wq_it = std::find_if(std::begin(WQ), std::end(WQ), checker); wq_it != std::end(WQ)) {
-        response_type response{rq_it->value().address, rq_it->value().v_address, wq_it->value().data, wq_it->value().data_value, rq_it->value().pf_metadata,
+        response_type response{rq_it->value().address, rq_it->value().v_address, wq_it->value().data, wq_it->value().data_value, wq_it->value().data_cache_line, rq_it->value().pf_metadata,
                                rq_it->value().instr_depend_on_me};
         for (auto* ret : rq_it->value().to_return) {
           ret->push_back(response);

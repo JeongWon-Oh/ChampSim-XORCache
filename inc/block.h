@@ -29,7 +29,7 @@ struct cache_block {
   champsim::address address{};
   champsim::address v_address{};
   champsim::address data{};
-  uint64_t data_cache_line[8] = {0};
+  std::array<uint64_t, 8> data_cache_line = {0};
 
   uint32_t pf_metadata = 0;
 };

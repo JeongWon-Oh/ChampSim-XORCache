@@ -67,6 +67,7 @@ class CACHE : public champsim::operable
     uint64_t instr_id;
 
     uint64_t data_value = 0;
+    std::array<uint64_t, 8> data_cache_line = {0};
 
     uint32_t pf_metadata;
     uint32_t cpu;
@@ -96,10 +97,12 @@ public:
     uint64_t instr_id;
 
     uint64_t data_value = 0;
+    std::array<uint64_t, 8> data_cache_line = {0};
 
     struct returned_value {
       champsim::address data;
       uint32_t pf_metadata;
+      std::array<uint64_t, 8> data_cache_line = {0};
     };
     champsim::waitable<returned_value> data_promise{};
     uint32_t cpu;

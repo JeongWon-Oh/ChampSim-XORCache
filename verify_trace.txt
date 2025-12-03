@@ -1,90 +1,134 @@
 --- Instruction 1 ---
-  IP: 0x55d21ce03189
+  IP: 0x55bdae4a1189
   Src Regs: 54 45 
   Dst Regs: 
 --- Instruction 2 ---
-  IP: 0x55d21ce0318d
+  IP: 0x55bdae4a118d
   Src Regs: 5 6 
   Dst Regs: 6 
-  Dst Mem: [Addr] 0x7ffd460b84e0 
-           [Data] 0x7ffd460b8510 
+  Dst Mem: [Addr] 0x7ffe568b06e0 
+           [Data] 0x7ffe568b0710 
 --- Instruction 3 ---
-  IP: 0x55d21ce0318e
+  IP: 0x55bdae4a118e
   Src Regs: 6 
   Dst Regs: 5 
 --- Instruction 4 ---
-  IP: 0x55d21ce03191
+  IP: 0x55bdae4a1191
   Src Regs: 
   Dst Regs: 
 --- Instruction 5 ---
-  IP: 0x55d21ce03192
+  IP: 0x55bdae4a1192
   Src Regs: 6 
   Dst Regs: 5 6 
-  Src Mem: [Addr] 0x7ffd460b84e0 
-           [Data] 0x7ffd460b8510 
+  Src Mem: [Addr] 0x7ffe568b06e0 
+           [Data] 0x7ffe568b0710 
 --- Instruction 6 ---
-  IP: 0x55d21ce03193
+  IP: 0x55bdae4a1193
   Src Regs: 6 
   Dst Regs: 26 6 
-  Src Mem: [Addr] 0x7ffd460b84e8 
-           [Data] 0x55d21ce03215 
+  Src Mem: [Addr] 0x7ffe568b06e8 
+           [Data] 0x55bdae4a1215 
 --- Instruction 7 ---
-  IP: 0x55d21ce03215
+  IP: 0x55bdae4a1215
   Src Regs: 26 
   Dst Regs: 10 
-  Src Mem: [Addr] 0x55d21ce06040 
+  Src Mem: [Addr] 0x55bdae4a4040 
            [Data] 0xcafebabedeadbeef 
 --- Instruction 8 ---
-  IP: 0x55d21ce0321c
+  IP: 0x55bdae4a121c
   Src Regs: 5 10 
   Dst Regs: 
-  Dst Mem: [Addr] 0x7ffd460b8500 
-           [Data] 0x7ffd460b8510 
+  Dst Mem: [Addr] 0x7ffe568b0700 
+           [Data] 0x7ffe568b0710 
 --- Instruction 9 ---
-  IP: 0x55d21ce03220
+  IP: 0x55bdae4a1220
   Src Regs: 26 
   Dst Regs: 10 
-  Src Mem: [Addr] 0x55d21ce06048 
+  Src Mem: [Addr] 0x55bdae4a4048 
            [Data] 0xcafebabedeadbef0 
 --- Instruction 10 ---
-  IP: 0x55d21ce03227
+  IP: 0x55bdae4a1227
   Src Regs: 5 10 
   Dst Regs: 
-  Dst Mem: [Addr] 0x7ffd460b8508 
-           [Data] 0x7ffd460b8510 
+  Dst Mem: [Addr] 0x7ffe568b0708 
+           [Data] 0x7ffe568b0710 
 --- Instruction 11 ---
-  IP: 0x55d21ce0322b
-  Src Regs: 
+  IP: 0x55bdae4a122b
+  Src Regs: 26 
   Dst Regs: 10 
+  Src Mem: [Addr] 0x55bdae4a4050 
+           [Data] 0xcafebabedeadbef1 
 --- Instruction 12 ---
-  IP: 0x55d21ce03235
-  Src Regs: 26 10 
+  IP: 0x55bdae4a1232
+  Src Regs: 5 10 
   Dst Regs: 
-  Dst Mem: [Addr] 0x55d21ce06060 
-           [Data] 0xdeadbeefcafebabe 
+  Dst Mem: [Addr] 0x7ffe568b0700 
+           [Data] 0x7ffe568b0710 
 --- Instruction 13 ---
-  IP: 0x55d21ce0323c
+  IP: 0x55bdae4a1236
+  Src Regs: 26 
+  Dst Regs: 10 
+  Src Mem: [Addr] 0x55bdae4a4058 
+           [Data] 0xcafebabedeadbef2 
+--- Instruction 14 ---
+  IP: 0x55bdae4a123d
+  Src Regs: 5 10 
+  Dst Regs: 
+  Dst Mem: [Addr] 0x7ffe568b0708 
+           [Data] 0x7ffe568b0710 
+--- Instruction 15 ---
+  IP: 0x55bdae4a1241
   Src Regs: 
   Dst Regs: 10 
---- Instruction 14 ---
-  IP: 0x55d21ce03246
+--- Instruction 16 ---
+  IP: 0x55bdae4a124b
   Src Regs: 26 10 
   Dst Regs: 
-  Dst Mem: [Addr] 0x55d21ce06068 
+  Dst Mem: [Addr] 0x55bdae4a4060 
+           [Data] 0xdeadbeefcafebabe 
+--- Instruction 17 ---
+  IP: 0x55bdae4a1252
+  Src Regs: 
+  Dst Regs: 10 
+--- Instruction 18 ---
+  IP: 0x55bdae4a125c
+  Src Regs: 26 10 
+  Dst Regs: 
+  Dst Mem: [Addr] 0x55bdae4a4068 
            [Data] 0xdeadbeefcafebabf 
---- Instruction 15 ---
-  IP: 0x55d21ce0324d
+--- Instruction 19 ---
+  IP: 0x55bdae4a1263
+  Src Regs: 
+  Dst Regs: 10 
+--- Instruction 20 ---
+  IP: 0x55bdae4a126d
+  Src Regs: 26 10 
+  Dst Regs: 
+  Dst Mem: [Addr] 0x55bdae4a4070 
+           [Data] 0xdeadbeefcafebac0 
+--- Instruction 21 ---
+  IP: 0x55bdae4a1274
+  Src Regs: 
+  Dst Regs: 10 
+--- Instruction 22 ---
+  IP: 0x55bdae4a127e
+  Src Regs: 26 10 
+  Dst Regs: 
+  Dst Mem: [Addr] 0x55bdae4a4078 
+           [Data] 0xdeadbeefcafebac1 
+--- Instruction 23 ---
+  IP: 0x55bdae4a1285
   Src Regs: 
   Dst Regs: 56 
---- Instruction 16 ---
-  IP: 0x55d21ce03252
+--- Instruction 24 ---
+  IP: 0x55bdae4a128a
   Src Regs: 26 6 
   Dst Regs: 26 6 
-  Dst Mem: [Addr] 0x7ffd460b84e8 
-           [Data] 0x7ffd460b84f0 
+  Dst Mem: [Addr] 0x7ffe568b06e8 
+           [Data] 0x7ffe568b06f0 
 
 파싱 완료!
 ========================================
-  총 읽어들인 명령어 수: 16
+  총 읽어들인 명령어 수: 24
   발견된 매직 마커 수: 0
 ========================================
