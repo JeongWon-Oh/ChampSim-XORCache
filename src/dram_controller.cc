@@ -27,6 +27,8 @@
 #include "util/span.h"
 #include "util/units.h"
 
+extern std::map<uint64_t, uint64_t> PMEM;
+
 MEMORY_CONTROLLER::MEMORY_CONTROLLER(champsim::chrono::picoseconds dbus_period, champsim::chrono::picoseconds mc_period, std::size_t t_rp, std::size_t t_rcd,
                                      std::size_t t_cas, std::size_t t_ras, champsim::chrono::microseconds refresh_period, std::vector<channel_type*>&& ul,
                                      std::size_t rq_size, std::size_t wq_size, std::size_t chans, champsim::data::bytes chan_width, std::size_t rows,
@@ -145,8 +147,26 @@ long DRAM_CHANNEL::finish_dbus_request()
   long progress{0};
 
   if (active_request != std::end(bank_request) && active_request->ready_time <= current_time) {
+    auto& pkt_ = active_request->pkt->value();
+    if (!pkt_.to_return.empty()) {
+        uint64_t v_addr = pkt_.v_address.to<uint64_t>();
+        uint64_t block_start_addr = v_addr & ~(static_cast<uint64_t>(BLOCK_SIZE) - 1);
+        fmt::print("vaddr: 0x{:x} v_addr: 0x{:x}\n", v_addr, block_start_addr);
+
+        for (int i = 0; i < 8; ++i) {
+            uint64_t curr_addr = block_start_addr + (i * 8);
+
+            if (PMEM.find(curr_addr) != PMEM.end()) {
+              fmt::print("word found!\n");
+              pkt_.data_cache_line[i] = PMEM[curr_addr];
+            } else {
+                pkt_.data_cache_line[i] = 0; // 데이터 없으면 0으로 초기화
+            }
+        }
+    }
+
     response_type response{active_request->pkt->value().address, active_request->pkt->value().v_address, active_request->pkt->value().data, active_request->pkt->value().data_value,
-                           active_request->pkt->value().data_cache_line, active_request->pkt->value().pf_metadata, active_request->pkt->value().instr_depend_on_me};
+                           pkt_.data_cache_line, active_request->pkt->value().pf_metadata, active_request->pkt->value().instr_depend_on_me};
     for (auto* ret : active_request->pkt->value().to_return) {
       ret->push_back(response);
     }
@@ -508,7 +528,7 @@ void MEMORY_CONTROLLER::initiate_requests()
 }
 
 DRAM_CHANNEL::request_type::request_type(const typename champsim::channel::request_type& req)
-    : pf_metadata(req.pf_metadata), address(req.address), v_address(req.address), data(req.data), data_value(req.data_value), instr_depend_on_me(req.instr_depend_on_me)
+    : pf_metadata(req.pf_metadata), address(req.address), v_address(req.v_address), data(req.data), data_value(req.data_value), instr_depend_on_me(req.instr_depend_on_me)
 {
   asid[0] = req.asid[0];
   asid[1] = req.asid[1];

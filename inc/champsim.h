@@ -21,6 +21,7 @@
 #include <cstdlib>
 #include <exception>
 #include <limits>
+#include <map>
 
 #include "extent.h"
 #include "util/bit_enum.h"
@@ -31,6 +32,8 @@ extern const unsigned BLOCK_SIZE;
 extern const unsigned PAGE_SIZE;
 extern const unsigned LOG2_BLOCK_SIZE;
 extern const unsigned LOG2_PAGE_SIZE;
+
+extern std::map<uint64_t, uint64_t> PMEM;
 
 namespace champsim
 {

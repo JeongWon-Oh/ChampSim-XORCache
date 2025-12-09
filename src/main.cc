@@ -35,6 +35,8 @@
 #include "tracereader.h"
 #include "vmem.h"
 
+std::map<uint64_t, uint64_t> PMEM;
+
 namespace champsim
 {
 std::vector<phase_stats> main(environment& env, std::vector<phase_info>& phases, std::vector<tracereader>& traces);
@@ -103,6 +105,28 @@ int main(int argc, char** argv) // NOLINT(bugprone-exception-escape)
     // NOLINTNEXTLINE(cppcoreguidelines-avoid-magic-numbers,readability-magic-numbers)
     warmup_instructions = simulation_instructions / 5;
   }
+
+  fmt::print("Initializing PMEM from traces with real data values...\n");
+
+  int pre_trace_idx = 0;
+  for (auto& t_name : trace_names) {
+      auto temp_reader = get_tracereader(t_name, static_cast<uint8_t>(pre_trace_idx++), knob_cloudsuite, false);
+
+      while (!temp_reader.eof()) {
+          auto instr = temp_reader();
+          for (size_t i = 0; i < instr.source_memory.size(); ++i) {
+              uint64_t addr_key = instr.source_memory[i].to<uint64_t>();
+              if (PMEM.find(addr_key) == PMEM.end()) {
+                  PMEM[addr_key] = instr.source_data[i];
+              }
+          }
+      }
+  }
+  
+  fmt::print("PMEM Initialization Complete. Total unique blocks: {}\n", PMEM.size());
+  for (const auto& pair : PMEM) {
+        fmt::print("  Key: 0x{:x}, Value: 0x{:x}\n", pair.first, pair.second);
+    }
 
   std::vector<champsim::tracereader> traces;
   std::transform(
