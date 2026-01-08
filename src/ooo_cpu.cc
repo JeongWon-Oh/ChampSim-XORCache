@@ -270,8 +270,8 @@ long O3_CPU::fetch_instruction()
   };
 
   auto l1i_req_begin = std::find_if(std::begin(IFETCH_BUFFER), std::end(IFETCH_BUFFER), fetch_ready);
-  if(l1i_req_begin->destination_data[0] || l1i_req_begin->source_data[0])
-    fmt::print("Dst data: 0x{:x} Src data: 0x{:x}\n", l1i_req_begin->destination_data[0], l1i_req_begin->source_data[0]);
+  // if(l1i_req_begin->destination_data[0] || l1i_req_begin->source_data[0])
+  //   fmt::print("Dst data: 0x{:x} Src data: 0x{:x}\n", l1i_req_begin->destination_data[0], l1i_req_begin->source_data[0]);
   for (champsim::bandwidth l1i_bw{L1I_BANDWIDTH}; l1i_bw.has_remaining() && l1i_req_begin != std::end(IFETCH_BUFFER); l1i_bw.consume()) {
     if(l1i_req_begin->ip.to<uint64_t>() == 0xFFFFFFFFFFFFFFFF) {
       fmt::print("CPU {} Magic marker found at cycle {}\n", cpu, current_time.time_since_epoch() / clock_period);

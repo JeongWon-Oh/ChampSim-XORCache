@@ -42,6 +42,10 @@ CACHE::CACHE(CACHE&& other)
       MAX_FILL(other.MAX_FILL), prefetch_as_load(other.prefetch_as_load), match_offset_bits(other.match_offset_bits), virtual_prefetch(other.virtual_prefetch),
       pref_activate_mask(std::move(other.pref_activate_mask)),
 
+      directory(std::move(other.directory)),
+      xor_metadata(std::move(other.xor_metadata)),
+      map_table(std::move(other.map_table)),
+
       sim_stats(std::move(other.sim_stats)), roi_stats(std::move(other.roi_stats)),
 
       pref_module_pimpl(std::move(other.pref_module_pimpl)), repl_module_pimpl(std::move(other.repl_module_pimpl))
@@ -102,7 +106,7 @@ CACHE::tag_lookup_type::tag_lookup_type(const request_type& req, bool local_pref
 CACHE::mshr_type::mshr_type(const tag_lookup_type& req, champsim::chrono::clock::time_point _time_enqueued)
     : address(req.address), v_address(req.v_address), ip(req.ip), instr_id(req.instr_id), cpu(req.cpu), type(req.type),
       prefetch_from_this(req.prefetch_from_this), time_enqueued(_time_enqueued), instr_depend_on_me(req.instr_depend_on_me), to_return(req.to_return),
-      data_value(req.data_value), data_cache_line(req.data_cache_line)
+      data_value(req.data_value), data_cache_line(req.data_cache_line), inclusive_evict(req.inclusive_evict)
 {
 }
 
@@ -110,11 +114,14 @@ CACHE::mshr_type CACHE::mshr_type::merge(mshr_type predecessor, mshr_type succes
 {
   std::vector<uint64_t> merged_instr{};
   std::vector<std::deque<response_type>*> merged_return{};
+  std::vector<std::deque<response_type>*> merged_inclusive_evict{};
 
   std::set_union(std::begin(predecessor.instr_depend_on_me), std::end(predecessor.instr_depend_on_me), std::begin(successor.instr_depend_on_me),
                  std::end(successor.instr_depend_on_me), std::back_inserter(merged_instr));
   std::set_union(std::begin(predecessor.to_return), std::end(predecessor.to_return), std::begin(successor.to_return), std::end(successor.to_return),
                  std::back_inserter(merged_return));
+  std::set_union(std::begin(predecessor.inclusive_evict), std::end(predecessor.inclusive_evict), std::begin(successor.inclusive_evict), std::end(successor.inclusive_evict),
+                 std::back_inserter(merged_inclusive_evict));               
 
   mshr_type retval{(successor.type == access_type::PREFETCH) ? predecessor : successor};
 
@@ -136,6 +143,7 @@ CACHE::mshr_type CACHE::mshr_type::merge(mshr_type predecessor, mshr_type succes
       ((successor.type != access_type::PREFETCH && predecessor.type == access_type::PREFETCH)) ? successor.time_enqueued : predecessor.time_enqueued;
   retval.instr_depend_on_me = merged_instr;
   retval.to_return = merged_return;
+  retval.inclusive_evict = merged_inclusive_evict;
   retval.data_promise = predecessor.data_promise;
 
   if constexpr (champsim::debug_print) {
@@ -207,6 +215,23 @@ bool CACHE::handle_fill(const mshr_type& fill_mshr)
                (fill_mshr.time_enqueued.time_since_epoch()) / clock_period, (current_time.time_since_epoch()) / clock_period);
   }
 
+  if (NAME == "LLC" && way != set_end && way->valid) {
+      // A. 기존 XOR 관계 끊기 (데이터가 사라지므로)
+      // if(NAME == "LLC") {
+      //     break_xor_relationship((uint32_t)set_idx, (uint32_t)way_idx);
+      // }
+
+      // B. [핵심] 상위 캐시 Invalidation 요청 (Inclusive Policy)
+      // 상위 캐시(L1/L2)에 있는 사본을 지우고, 만약 Dirty였다면 알려달라고 함
+      bool was_upper_dirty = invalidate_entry(*way);
+
+      // C. 상위 캐시가 Dirty였다면, LLC 블록도 Dirty로 승격
+      // (그래야 아래 Writeback 로직에서 메모리로 올바르게 내려감)
+      if (was_upper_dirty) {
+          way->dirty = true;
+      }
+  }
+
   if (way != set_end && way->valid && way->dirty) {
     request_type writeback_packet;
 
@@ -257,13 +282,50 @@ bool CACHE::handle_fill(const mshr_type& fill_mshr)
             way->data_cache_line[i] = fill_mshr.data_cache_line[i];
         }
     }
-    // if (fill_mshr.type == access_type::WRITE) {
-    //   long w_index = get_word_index(fill_mshr.address);
-    //   way->data_cache_line[w_index] = fill_mshr.data_value;
-    // } else if (fill_mshr.type == access_type::LOAD) {
-    //   long w_index = get_word_index(fill_mshr.address);
-    //   way->data_cache_line[w_index] = fill_mshr.data_value;
-    // }
+    // =================================================================
+    // [XOR Cache Logic Start] 데이터가 캐시에 들어온 직후 실행
+    // =================================================================
+    if(NAME == "LLC") {
+      long set_idx = get_set_index(fill_mshr.address);
+      uint32_t flat_idx = set_idx * NUM_WAY + way_idx;
+      directory[flat_idx].sharers[fill_mshr.cpu] = true;
+      uint32_t map_idx = get_sbl_hash(way->data_cache_line);
+
+      if (map_table[map_idx].valid) {
+          // [Hit] Map Table에 후보가 있음 -> XOR 압축 수행 가능성 확인
+          uint32_t p_set = map_table[map_idx].set_index;
+          uint32_t p_way = map_table[map_idx].way_index;
+          uint32_t p_flat_idx = p_set * NUM_WAY + p_way;
+
+          // 파트너 블록에 접근하기 위한 Iterator
+          auto partner_block_it = std::next(std::begin(this->block), p_flat_idx);
+
+          // 자기 자신과 매칭되는 경우 방지 & 파트너 유효성 검사
+          if (flat_idx != p_flat_idx && partner_block_it->valid) {
+              // A. 메타데이터 업데이트 (XOR 관계 설정)
+              xor_metadata[flat_idx] = {true, p_set, p_way};
+              xor_metadata[p_flat_idx] = {true, (uint32_t)set_idx, (uint32_t)way_idx};
+              // // B. 실제 데이터 XOR 연산 (Value = New_Data ^ Partner_Data)
+              // std::array<uint64_t, 8> xor_val;
+              // for(int i=0; i<8; i++) {
+              //     xor_val[i] = way->data_cache_line[i] ^ partner_block_it->data_cache_line[i];
+              // }
+              // // C. 데이터 덮어쓰기 (논리적 공유 상태 모사)
+              // way->data_cache_line = xor_val;
+              // partner_block_it->data_cache_line = xor_val;
+              map_table[map_idx].valid = false;
+          } else {
+              // 파트너가 무효하거나 자기 자신인 경우 -> Map Table 갱신
+              map_table[map_idx] = {true, (uint32_t)set_idx, (uint32_t)way_idx};
+          }
+      } else {
+          // [Miss] 후보 없음 -> Map Table에 등록하고 대기
+          map_table[map_idx] = {true, (uint32_t)set_idx, (uint32_t)way_idx};
+      }
+    }
+    // =================================================================
+    // [XOR Cache Logic End]
+    // =================================================================
   }
 
   // COLLECT STATS
@@ -313,6 +375,75 @@ bool CACHE::try_hit(const tag_lookup_type& handle_pkt)
 
   if (hit) {
     sim_stats.hits.increment(std::pair{handle_pkt.type, handle_pkt.cpu});
+
+    if(NAME == "LLC") {
+      long set_idx = get_set_index(handle_pkt.address);
+      const auto way_idx = std::distance(set_begin, way);
+      uint32_t flat_idx = set_idx * NUM_WAY + way_idx;
+      
+      if(xor_metadata[flat_idx].is_xored) {
+        fmt::print("hit on XORed\n");
+        // -----------------------------------------------------------
+        // 1. Direct Forwarding 확인 (Target: Requested Line B)
+        // -----------------------------------------------------------
+        bool is_direct_forwarding = false;
+        for(int i=0; i<NUM_CPUS; i++) {
+             if(i != handle_pkt.cpu && directory[flat_idx].sharers[i]) {
+                 is_direct_forwarding = true;
+                 break;
+             }
+        }
+
+        if (is_direct_forwarding) {
+            // [Case B] Direct Forwarding
+            sim_stats.total_miss_latency_cycles += 21;
+            // fmt::print(" -> Direct Forwarding\n");
+        } 
+        else {
+            // -------------------------------------------------------
+            // 2. Recovery 수행 (Target: Partner Line A)
+            // -------------------------------------------------------
+            uint32_t p_set = xor_metadata[flat_idx].partner_set;
+            uint32_t p_way = xor_metadata[flat_idx].partner_way;
+            uint32_t p_flat_idx = p_set * NUM_WAY + p_way;
+
+            bool partner_is_local = directory[p_flat_idx].sharers[handle_pkt.cpu];
+            bool partner_is_remote = false;
+            
+            // 파트너 유효성 및 리모트 체크
+            if (p_flat_idx < directory.size()) { // Safety check
+                for(int i=0; i<NUM_CPUS; i++) {
+                    if(i != handle_pkt.cpu && directory[p_flat_idx].sharers[i]) {
+                        partner_is_remote = true;
+                        break;
+                    }
+                }
+            }
+
+            if(partner_is_local) {
+                // [Case A] Local Recovery
+                sim_stats.total_miss_latency_cycles += 8;
+                // fmt::print(" -> Local Recovery\n");
+            }
+            else if(partner_is_remote) {
+                // [Case C] Remote Recovery
+                sim_stats.total_miss_latency_cycles += 35;
+                // fmt::print(" -> Remote Recovery\n");
+            }
+            else {
+                // [Error Case] Minimum Sharer Invariant Violated
+                fmt::print("ERROR");
+                break_xor_relationship((uint32_t)set_idx, (uint32_t)way_idx);
+            }
+        }
+        // -----------------------------------------------------------
+        // 3. UnXORing (Write 시)
+        // -----------------------------------------------------------
+        if (handle_pkt.type == access_type::WRITE || handle_pkt.type == access_type::RFO) {
+          break_xor_relationship((uint32_t)set_idx, (uint32_t)way_idx);
+        }
+      }
+    }
 
     uint64_t response_data = way->data_cache_line[get_word_index(handle_pkt.address)];
     response_type response{handle_pkt.address, handle_pkt.v_address, way->data, response_data, way->data_cache_line, metadata_thru, handle_pkt.instr_depend_on_me};
@@ -465,51 +596,68 @@ auto CACHE::initiate_tag_check(champsim::channel* ul)
 
 long CACHE::operate()
 {
-  // if(llc_print_status && NAME == "LLC" && cpu == 1) {
-  //   std::vector<long> sets_to_check = {10, 21};
+  if(llc_print_status && NAME == "LLC" && cpu == 1) {
+    std::vector<long> sets_to_check = {10, 21};
+    for (long set_idx : sets_to_check) {
+        fmt::print("===== CPU{} Cache Set {} Status at Cycle {} =====\n", cpu, set_idx, current_time.time_since_epoch() / clock_period);
+        auto set_begin = std::next(std::begin(this->block), set_idx * this->NUM_WAY);
+        auto set_end = std::next(set_begin, this->NUM_WAY);
+        int way = 0;
+        // for (auto block_it = set_begin; block_it != set_end; ++block_it) {
+        //     fmt::print("  [Way {}] Valid: {}, Address: 0x{:x} V_Address: 0x{:x} data: {}\n", way, block_it->valid, block_it->address.to<uint64_t>(), block_it->v_address.to<uint64_t>(), block_it->data);
+        //     way++;
+        // }
+        for (auto block_it = set_begin; block_it != set_end; ++block_it) {
+          fmt::print("  [Way {}] Valid: {}, Address: 0x{:x} V_Address: 0x{:x} data: {} cache_line: [{}]\n",
+          way, block_it->valid, block_it->address.to<uint64_t>(), block_it->v_address.to<uint64_t>(), block_it->data,
+          [&]() {
+                std::string res;
+                for (size_t i = 0; i < 8; ++i) {
+                    // 각 요소를 16진수 문자열로 변환하여 이어 붙임
+                    res += fmt::format("{:#018x}", block_it->data_cache_line[i]);
+                    if (i < 7) res += ", ";
+                }
+                return res;
+            }() // <--- 람다를 즉시 실행하여 결과 문자열(std::string)을 리턴받음
+          );
+            way++;
+        }
+    }
+    llc_print_status = false;
+  }
+  // if(NAME == "cpu0_L1D" || NAME == "cpu0_L2C" || NAME == "LLC") {
+
+
+  // if(NAME == "LLC") {
+  //   std::vector<long> sets_to_check = {0};
   //   for (long set_idx : sets_to_check) {
-  //       fmt::print("===== CPU{} Cache Set {} Status at Cycle {} =====\n", cpu, set_idx, current_time.time_since_epoch() / clock_period);
+  //       fmt::print("===== CPU{} {} Cache Set {} Status at Cycle {} =====\n", cpu, NAME, set_idx, current_time.time_since_epoch() / clock_period);
   //       auto set_begin = std::next(std::begin(this->block), set_idx * this->NUM_WAY);
   //       auto set_end = std::next(set_begin, this->NUM_WAY);
   //       int way = 0;
   //       for (auto block_it = set_begin; block_it != set_end; ++block_it) {
-  //           fmt::print("  [Way {}] Valid: {}, Address: 0x{:x} V_Address: 0x{:x} data: {}\n", way, block_it->valid, block_it->address.to<uint64_t>(), block_it->v_address.to<uint64_t>(), block_it->data);
-  //           way++;
+  //           fmt::print("  [Way {}] Valid: {}, Address: 0x{:x} V_Address: 0x{:x} data: {} cache_line: [{}]\n",
+  //   way,
+  //   block_it->valid,
+  //   block_it->address.to<uint64_t>(),
+  //   block_it->v_address.to<uint64_t>(),
+  //   block_it->data,
+  //   // --- 여기서부터 수정 ---
+  //   [&]() {
+  //       std::string res;
+  //       for (size_t i = 0; i < 8; ++i) {
+  //           // 각 요소를 16진수 문자열로 변환하여 이어 붙임
+  //           res += fmt::format("{:#018x}", block_it->data_cache_line[i]);
+  //           if (i < 7) res += ", ";
   //       }
+  //       return res;
+  //   }() // <--- 람다를 즉시 실행하여 결과 문자열(std::string)을 리턴받음
+  //   // -----------------------
+  //     );
+  //       way++;
+  //     }
   //   }
-  //   llc_print_status = false;
   // }
-  // if(NAME == "cpu0_L1D" || NAME == "cpu0_L2C" || NAME == "LLC") {
-  if(NAME == "LLC") {
-    std::vector<long> sets_to_check = {0};
-    for (long set_idx : sets_to_check) {
-        fmt::print("===== CPU{} {} Cache Set {} Status at Cycle {} =====\n", cpu, NAME, set_idx, current_time.time_since_epoch() / clock_period);
-        auto set_begin = std::next(std::begin(this->block), set_idx * this->NUM_WAY);
-        auto set_end = std::next(set_begin, this->NUM_WAY);
-        int way = 0;
-        for (auto block_it = set_begin; block_it != set_end; ++block_it) {
-            fmt::print("  [Way {}] Valid: {}, Address: 0x{:x} V_Address: 0x{:x} data: {} cache_line: [{}]\n",
-    way,
-    block_it->valid,
-    block_it->address.to<uint64_t>(),
-    block_it->v_address.to<uint64_t>(),
-    block_it->data,
-    // --- 여기서부터 수정 ---
-    [&]() {
-        std::string res;
-        for (size_t i = 0; i < 8; ++i) {
-            // 각 요소를 16진수 문자열로 변환하여 이어 붙임
-            res += fmt::format("{:#018x}", block_it->data_cache_line[i]);
-            if (i < 7) res += ", ";
-        }
-        return res;
-    }() // <--- 람다를 즉시 실행하여 결과 문자열(std::string)을 리턴받음
-    // -----------------------
-);
-        way++;
-      }
-    }
-  }
 
   long progress{0};
 
@@ -535,6 +683,12 @@ long CACHE::operate()
     progress += std::distance(std::cbegin(lower_translate->returned), std::cend(lower_translate->returned));
     lower_translate->returned.clear();
   }
+
+  std::for_each(std::cbegin(lower_level->invalidation_queue), std::cend(lower_level->invalidation_queue),
+                [this](const auto& inv) {
+                    this->invalidate_entry(inv.address); 
+                });
+  lower_level->invalidation_queue.clear();
 
   // Perform fills
   champsim::bandwidth fill_bw{MAX_FILL};
@@ -627,6 +781,27 @@ long get_word_index(champsim::address address)
   return address.slice(champsim::dynamic_extent{champsim::data::bits{6}, champsim::data::bits{3}}).to<long>(); 
 }
 
+uint32_t CACHE::get_sbl_hash(const std::array<uint64_t, 8>& data) {
+    uint32_t hash = 0;
+    for (const auto& word : data) {
+        hash ^= (word >> 16); 
+    }
+    return hash % MAP_TABLE_SIZE;
+}
+
+void CACHE::break_xor_relationship(uint32_t set, uint32_t way) {
+    uint32_t idx = set * NUM_WAY + way;
+    
+    if (xor_metadata[idx].is_xored) {
+        uint32_t p_set = xor_metadata[idx].partner_set;
+        uint32_t p_way = xor_metadata[idx].partner_way;
+        uint32_t p_idx = p_set * NUM_WAY + p_way;
+
+        xor_metadata[p_idx].is_xored = false;
+        xor_metadata[idx].is_xored = false;
+    }
+}
+
 // LCOV_EXCL_START exclude deprecated function
 uint64_t CACHE::get_set(uint64_t address) const { return static_cast<uint64_t>(get_set_index(champsim::address{address})); }
 // LCOV_EXCL_STOP
@@ -673,6 +848,48 @@ long CACHE::invalidate_entry(champsim::address inval_addr)
   }
 
   return std::distance(begin, inv_way);
+}
+
+bool CACHE::invalidate_entry(BLOCK& inval_block)
+{
+  bool was_dirty = inval_block.dirty;
+
+  // 1. Directory(Sharer List) 확인 및 상위 캐시 요청
+  uint32_t set_idx = get_set_index(inval_block.address);
+  
+  // 포인터 연산으로 flat index 계산
+  auto block_start = std::begin(this->block);
+  auto current_block_iter = (std::vector<BLOCK>::iterator)&inval_block;
+  long flat_idx = std::distance(block_start, current_block_iter);
+  
+  // Directory 범위 체크
+  if (flat_idx >= 0 && flat_idx < (long)directory.size()) {
+      
+      // ChampSim 표준 Invalidator 생성 (주소를 받아 패킷 생성기를 만듦)
+      auto invalidator = channel_type::invalidator_for(inval_block.address);
+
+      for (size_t i = 0; i < directory[flat_idx].sharers.size(); ++i) {
+          // 해당 코어가 Sharer라면
+          if (directory[flat_idx].sharers[i]) {
+              // 채널이 존재하는지 확인 후 Invalidation 패킷 전송
+              if (i < upper_levels.size()) {
+                   // [수정됨] 직접 호출 대신 채널에 무효화 요청을 보냄
+                   invalidator(upper_levels[i]);
+              }
+              // Sharer 목록에서 제거
+              directory[flat_idx].sharers[i] = false;
+          }
+      }
+  }
+
+  // 2. 블록 무효화 (Local Eviction)
+  inval_block.valid = false;
+  inval_block.dirty = false;
+  inval_block.prefetch = false;
+  
+  // 상위 캐시의 Dirty 여부는 비동기 패킷으로 처리되므로 
+  // 여기서는 로컬 Dirty 상태만 반환합니다.
+  return was_dirty;
 }
 
 bool CACHE::prefetch_line(champsim::address pf_addr, bool fill_this_level, uint32_t prefetch_metadata)

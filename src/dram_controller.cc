@@ -151,13 +151,13 @@ long DRAM_CHANNEL::finish_dbus_request()
     if (!pkt_.to_return.empty()) {
         uint64_t v_addr = pkt_.v_address.to<uint64_t>();
         uint64_t block_start_addr = v_addr & ~(static_cast<uint64_t>(BLOCK_SIZE) - 1);
-        fmt::print("vaddr: 0x{:x} v_addr: 0x{:x}\n", v_addr, block_start_addr);
+        // fmt::print("vaddr: 0x{:x} v_addr: 0x{:x}\n", v_addr, block_start_addr);
 
         for (int i = 0; i < 8; ++i) {
             uint64_t curr_addr = block_start_addr + (i * 8);
 
             if (PMEM.find(curr_addr) != PMEM.end()) {
-              fmt::print("word found!\n");
+              // fmt::print("word found!\n");
               pkt_.data_cache_line[i] = PMEM[curr_addr];
             } else {
                 pkt_.data_cache_line[i] = 0; // 데이터 없으면 0으로 초기화

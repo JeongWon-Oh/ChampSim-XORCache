@@ -48,6 +48,7 @@
 #include "waitable.h"
 
 extern bool llc_print_status;
+extern bool XOR_CACHE_MODE;
 
 class CACHE : public champsim::operable
 {
@@ -84,9 +85,26 @@ class CACHE : public champsim::operable
 
     std::vector<uint64_t> instr_depend_on_me{};
     std::vector<std::deque<response_type>*> to_return{};
+    std::vector<std::deque<response_type>*> inclusive_evict{};
 
     explicit tag_lookup_type(request_type req) : tag_lookup_type(req, false, false) {}
     tag_lookup_type(const request_type& req, bool local_pref, bool skip);
+  };
+
+  struct DIR_ENTRY {
+    std::vector<bool> sharers;
+  };
+
+  struct XOR_META {
+    bool is_xored = false;
+    uint32_t partner_set = 0;
+    uint32_t partner_way = 0;
+  };
+
+  struct MAP_ENTRY {
+    bool valid = false;
+    uint32_t set_index = 0;
+    uint32_t way_index = 0;
   };
 
 public:
@@ -116,6 +134,7 @@ public:
 
     std::vector<uint64_t> instr_depend_on_me{};
     std::vector<std::deque<response_type>*> to_return{};
+    std::vector<std::deque<response_type>*> inclusive_evict{};
 
     mshr_type(const tag_lookup_type& req, champsim::chrono::clock::time_point _time_enqueued);
     static mshr_type merge(mshr_type predecessor, mshr_type successor);
@@ -177,6 +196,14 @@ public:
   bool virtual_prefetch;
   std::vector<access_type> pref_activate_mask;
 
+  std::vector<DIR_ENTRY> directory;
+  std::vector<XOR_META> xor_metadata;
+  std::vector<MAP_ENTRY> map_table;
+  const uint32_t MAP_TABLE_SIZE = 128;
+
+  uint32_t get_sbl_hash(const std::array<uint64_t, 8>& data); // Map Function
+  void break_xor_relationship(uint32_t set, uint32_t way);    // UnXORing
+
   using stats_type = cache_stats;
 
   stats_type sim_stats, roi_stats;
@@ -219,6 +246,7 @@ public:
   [[deprecated("This function should not be used to access the blocks directly.")]] [[nodiscard]] uint64_t get_way(uint64_t address, uint64_t set) const;
 
   long invalidate_entry(champsim::address inval_addr);
+  bool invalidate_entry(BLOCK& inval_block);
   bool prefetch_line(champsim::address pf_addr, bool fill_this_level, uint32_t prefetch_metadata);
 
   [[deprecated]] bool prefetch_line(uint64_t pf_addr, bool fill_this_level, uint32_t prefetch_metadata);
@@ -332,6 +360,12 @@ public:
         prefetch_as_load(b.m_pref_load), match_offset_bits(b.m_wq_full_addr), virtual_prefetch(b.m_va_pref), pref_activate_mask(b.m_pref_act_mask),
         pref_module_pimpl(std::make_unique<prefetcher_module_model<Ps...>>(this)), repl_module_pimpl(std::make_unique<replacement_module_model<Rs...>>(this))
   {
+    directory.resize(NUM_SET * NUM_WAY);
+    for (auto& entry : directory) {
+        entry.sharers.resize(NUM_CPUS, false); 
+    }
+    xor_metadata.resize(NUM_SET * NUM_WAY);
+    map_table.resize(MAP_TABLE_SIZE);
   }
 
   CACHE(const CACHE&) = delete;

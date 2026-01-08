@@ -1,9 +1,9 @@
 {
-  "executable_name": "test",
+  "executable_name": "covert",
   "block_size": 64,
   "page_size": 131072,
   "heartbeat_frequency": 10000000,
-  "num_cores": 1,
+  "num_cores": 2,
 
   "ooo_cpu": [
     {
@@ -143,13 +143,13 @@
 
   "LLC": {
     "frequency": 4000,
-    "sets": 1,
+    "sets": 2048,
     "ways": 16,
     "rq_size": 32,
     "wq_size": 32,
     "pq_size": 32,
     "mshr_size": 64,
-    "latency": 20,
+    "latency": 40,
     "max_tag_check": 1,
     "max_fill": 1,
     "prefetch_as_load": false,

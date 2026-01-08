@@ -87,6 +87,10 @@ class channel
     explicit response(request req) : response(req.address, req.v_address, req.data, req.data_value, req.data_cache_line, req.pf_metadata, req.instr_depend_on_me) {}
   };
 
+  struct invalidation_request {
+    champsim::address address;
+  };
+
   template <typename R>
   bool do_add_queue(R& queue, std::size_t queue_size, const typename R::value_type& packet);
 
@@ -100,9 +104,11 @@ public:
   using response_type = response;
   using request_type = request;
   using stats_type = cache_queue_stats;
+  using invalidation_request_type = invalidation_request;
 
   std::deque<request_type> RQ{}, PQ{}, WQ{};
   std::deque<response_type> returned{};
+  std::deque<invalidation_request_type> invalidation_queue{};
 
   stats_type sim_stats{}, roi_stats{};
 
@@ -122,6 +128,14 @@ public:
   [[nodiscard]] std::size_t pq_size() const;
 
   void check_collision();
+
+  template <typename T>
+  static auto invalidator_for(T&& request)
+  {
+    return [req = invalidation_request_type{request}](channel* ul) {
+      ul->invalidation_queue.push_back(req);
+    };
+  }
 };
 } // namespace champsim
 
