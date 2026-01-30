@@ -10343,9 +10343,9 @@ CPU1 draining done cycle: 60820
   [Way 13] Valid: true, Address: 0x340550 V_Address: 0x7f226ca00550 data: 0x0 cache_line: [0x0000000000000000, 0x0000000000000000, 0x00000000000000ff, 0x0000000000000000, 0x0000000000000000, 0x0000000000000000, 0x0000000000000000, 0x0000000000000000]
   [Way 14] Valid: true, Address: 0x6c0550 V_Address: 0x7f0bbb0c0550 data: 0x0 cache_line: [0x0000000000000000, 0x0000000000000000, 0x0000000000000011, 0x0000000000000000, 0x0000000000000000, 0x0000000000000000, 0x0000000000000000, 0x0000000000000000]
   [Way 15] Valid: true, Address: 0x380550 V_Address: 0x7f226ca40550 data: 0x0 cache_line: [0x0000000000000000, 0x0000000000000000, 0x00000000000000ff, 0x0000000000000000, 0x0000000000000000, 0x0000000000000000, 0x0000000000000000, 0x0000000000000000]
-Simulation finished CPU 0 instructions: 10001 cycles: 60828 cumulative IPC: 0.1644 (Simulation time: 00 hr 00 min 01 sec)
-Simulation complete CPU 1 instructions: 19943 cycles: 60828 cumulative IPC: 0.3279 (Simulation time: 00 hr 00 min 01 sec)
-Simulation complete CPU 0 instructions: 10001 cycles: 60828 cumulative IPC: 0.1644 (Simulation time: 00 hr 00 min 01 sec)
+Simulation finished CPU 0 instructions: 10001 cycles: 60828 cumulative IPC: 0.1644 (Simulation time: 00 hr 00 min 00 sec)
+Simulation complete CPU 1 instructions: 19943 cycles: 60828 cumulative IPC: 0.3279 (Simulation time: 00 hr 00 min 00 sec)
+Simulation complete CPU 0 instructions: 10001 cycles: 60828 cumulative IPC: 0.1644 (Simulation time: 00 hr 00 min 00 sec)
 
 ChampSim completed all CPUs
 
@@ -10479,6 +10479,8 @@ cpu0->LLC PREFETCH     ACCESS:          0 HIT:          0 MISS:          0 MSHR_
 cpu0->LLC WRITE        ACCESS:          0 HIT:          0 MISS:          0 MSHR_MERGE:          0
 cpu0->LLC TRANSLATION  ACCESS:         49 HIT:          1 MISS:         48 MSHR_MERGE:          0
 cpu0->LLC PREFETCH REQUESTED:          0 ISSUED:          0 USEFUL:          0 USELESS:          0
+cpu0->LLC XOR COMPRESSED:        401 UNXORED:          0
+cpu0->LLC XOR RECOVERY LOCAL:        226 REMOTE:        118 DIRECT_FWD:          1
 cpu0->LLC AVERAGE MISS LATENCY: 405.6 cycles
 cpu1->LLC TOTAL        ACCESS:        701 HIT:        287 MISS:        414 MSHR_MERGE:          1
 cpu1->LLC LOAD         ACCESS:        651 HIT:        287 MISS:        364 MSHR_MERGE:          0
@@ -10487,6 +10489,8 @@ cpu1->LLC PREFETCH     ACCESS:          0 HIT:          0 MISS:          0 MSHR_
 cpu1->LLC WRITE        ACCESS:          0 HIT:          0 MISS:          0 MSHR_MERGE:          0
 cpu1->LLC TRANSLATION  ACCESS:         48 HIT:          0 MISS:         48 MSHR_MERGE:          1
 cpu1->LLC PREFETCH REQUESTED:          0 ISSUED:          0 USEFUL:          0 USELESS:          0
+cpu1->LLC XOR COMPRESSED:        401 UNXORED:          0
+cpu1->LLC XOR RECOVERY LOCAL:        226 REMOTE:        118 DIRECT_FWD:          1
 cpu1->LLC AVERAGE MISS LATENCY: 390.9 cycles
 
 Region of Interest Statistics
@@ -10615,6 +10619,8 @@ cpu0->LLC PREFETCH     ACCESS:          0 HIT:          0 MISS:          0 MSHR_
 cpu0->LLC WRITE        ACCESS:          0 HIT:          0 MISS:          0 MSHR_MERGE:          0
 cpu0->LLC TRANSLATION  ACCESS:         49 HIT:          1 MISS:         48 MSHR_MERGE:          0
 cpu0->LLC PREFETCH REQUESTED:          0 ISSUED:          0 USEFUL:          0 USELESS:          0
+cpu0->LLC XOR COMPRESSED:        401 UNXORED:          0
+cpu0->LLC XOR RECOVERY LOCAL:        226 REMOTE:        118 DIRECT_FWD:          1
 cpu0->LLC AVERAGE MISS LATENCY: 405.6 cycles
 cpu1->LLC TOTAL        ACCESS:        701 HIT:        287 MISS:        414 MSHR_MERGE:          1
 cpu1->LLC LOAD         ACCESS:        651 HIT:        287 MISS:        364 MSHR_MERGE:          0
@@ -10623,6 +10629,8 @@ cpu1->LLC PREFETCH     ACCESS:          0 HIT:          0 MISS:          0 MSHR_
 cpu1->LLC WRITE        ACCESS:          0 HIT:          0 MISS:          0 MSHR_MERGE:          0
 cpu1->LLC TRANSLATION  ACCESS:         48 HIT:          0 MISS:         48 MSHR_MERGE:          1
 cpu1->LLC PREFETCH REQUESTED:          0 ISSUED:          0 USEFUL:          0 USELESS:          0
+cpu1->LLC XOR COMPRESSED:        401 UNXORED:          0
+cpu1->LLC XOR RECOVERY LOCAL:        226 REMOTE:        118 DIRECT_FWD:          1
 cpu1->LLC AVERAGE MISS LATENCY: 390.9 cycles
 
 DRAM Statistics

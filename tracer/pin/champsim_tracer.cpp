@@ -293,20 +293,23 @@ VOID Instruction(INS ins, VOID* v)
                      
     // 3. Store Operation (Write)
     if (INS_MemoryOperandIsWritten(ins, memOp)) {
-        // Store 명령의 소스 레지스터를 반복하여 캡처합니다.
+        // Store 명령의 소스 레지스터 중 실제 데이터 레지스터만 캡처
+        // 베이스/인덱스 레지스터는 주소 계산용이므로 제외해야 함
+        REG base_reg = INS_MemoryBaseReg(ins);
+        REG index_reg = INS_MemoryIndexReg(ins);
+        
         UINT32 readRegCount = INS_MaxNumRRegs(ins);
         
         for (UINT32 i = 0; i < readRegCount; i++) {
-            REG src_reg = INS_RegR(ins, i); // i번째 소스 레지스터
+            REG src_reg = INS_RegR(ins, i);
 
-            // --- 중요: REG_is_gr() 함수를 사용하여 범용 레지스터만 필터링합니다. ---
-            if (REG_is_gr(src_reg)) {
-                // Store 명령의 메모리 쓰기 주소는 IARG_MEMORYOP_EA로 전달하고,
-                // 데이터는 IARG_REG_VALUE로 전달합니다.
+            // 범용 레지스터이면서, 베이스/인덱스 레지스터가 아닌 경우만 캡처
+            if (REG_is_gr(src_reg) && src_reg != base_reg && src_reg != index_reg) {
                 INS_InsertCall(ins, IPOINT_BEFORE, (AFUNPTR)WriteToSet_Dest_From_Reg, 
-                               IARG_MEMORYOP_EA, memOp,      // 유효 주소를 실행 시점에 계산하여 전달
-                               IARG_REG_VALUE, src_reg,      // GPR의 실제 값 (데이터)
+                               IARG_MEMORYOP_EA, memOp,
+                               IARG_REG_VALUE, src_reg,
                                IARG_END);
+                break;  // 첫 번째 데이터 레지스터만 캡처
             }
         }
     }

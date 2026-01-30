@@ -18,6 +18,13 @@ struct cache_stats {
   uint64_t pf_useless = 0;
   uint64_t pf_fill = 0;
 
+  // [XOR Cache Stats]
+  uint64_t xor_compressions = 0;  
+  uint64_t local_recoveries = 0;  
+  uint64_t remote_recoveries = 0; 
+  uint64_t direct_forwardings = 0;
+  uint64_t unxorings = 0;         
+
   champsim::stats::event_counter<std::pair<access_type, std::remove_cv_t<decltype(NUM_CPUS)>>> hits = {};
   champsim::stats::event_counter<std::pair<access_type, std::remove_cv_t<decltype(NUM_CPUS)>>> misses = {};
   champsim::stats::event_counter<std::pair<access_type, std::remove_cv_t<decltype(NUM_CPUS)>>> mshr_merge = {};

@@ -112,11 +112,28 @@ int main(int argc, char** argv) // NOLINT(bugprone-exception-escape)
   for (auto& t_name : trace_names) {
       auto temp_reader = get_tracereader(t_name, static_cast<uint8_t>(pre_trace_idx++), knob_cloudsuite, false);
 
+      int debug_count = 0;
       while (!temp_reader.eof()) {
           auto instr = temp_reader();
+          
+          // STORE (destination_memory, destination_data) 처리 - 먼저 처리해야 함!
+          for (size_t i = 0; i < instr.destination_memory.size(); ++i) {
+              uint64_t addr_key = instr.destination_memory[i].to<uint64_t>();
+              if (addr_key != 0) {
+                  // STORE는 항상 최신 값으로 덮어씀
+                  PMEM[addr_key] = instr.destination_data[i];
+                  if (debug_count < 20) {
+                      fmt::print("[PMEM_INIT_DEBUG] STORE dest_memory[{}]: addr=0x{:x}, data=0x{:x}\n", 
+                                 i, addr_key, instr.destination_data[i]);
+                      debug_count++;
+                  }
+              }
+          }
+          
+          // LOAD (source_memory, source_data) 처리
           for (size_t i = 0; i < instr.source_memory.size(); ++i) {
               uint64_t addr_key = instr.source_memory[i].to<uint64_t>();
-              if (PMEM.find(addr_key) == PMEM.end()) {
+              if (addr_key != 0 && PMEM.find(addr_key) == PMEM.end()) {
                   PMEM[addr_key] = instr.source_data[i];
               }
           }
@@ -124,9 +141,12 @@ int main(int argc, char** argv) // NOLINT(bugprone-exception-escape)
   }
   
   fmt::print("PMEM Initialization Complete. Total unique blocks: {}\n", PMEM.size());
+  // PMEM 디버깅: 0xAAAA... 값을 가진 항목 출력
   for (const auto& pair : PMEM) {
-        fmt::print("  Key: 0x{:x}, Value: 0x{:x}\n", pair.first, pair.second);
-    }
+      if (pair.second == 0xAAAAAAAAAAAAAAAAULL || pair.second == 0x0001000100010001ULL) {
+          fmt::print("  [TEST DATA] Key: 0x{:x}, Value: 0x{:x}\n", pair.first, pair.second);
+      }
+  }
 
   std::vector<champsim::tracereader> traces;
   std::transform(

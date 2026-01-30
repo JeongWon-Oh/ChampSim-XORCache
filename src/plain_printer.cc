@@ -119,6 +119,17 @@ std::vector<std::string> champsim::plain_printer::format(CACHE::stats_type stats
     lines.push_back(fmt::format("cpu{}->{} PREFETCH REQUESTED: {:10} ISSUED: {:10} USEFUL: {:10} USELESS: {:10}", cpu, stats.name, stats.pf_requested,
                                 stats.pf_issued, stats.pf_useful, stats.pf_useless));
 
+    // =================================================================
+    // [XOR Cache Stats Printer]
+    // =================================================================
+    if (stats.name == "LLC") {
+        lines.push_back(fmt::format("cpu{}->{} XOR COMPRESSED: {:10} UNXORED: {:10}", cpu, stats.name,
+                                    stats.xor_compressions, stats.unxorings));
+        lines.push_back(fmt::format("cpu{}->{} XOR RECOVERY LOCAL: {:10} REMOTE: {:10} DIRECT_FWD: {:10}", cpu, stats.name,
+                                    stats.local_recoveries, stats.remote_recoveries, stats.direct_forwardings));
+    }
+    // =================================================================
+
     uint64_t total_downstream_demands = total_mshr_return - stats.mshr_return.value_or(std::pair{access_type::PREFETCH, cpu}, mshr_return_value_type{});
     lines.push_back(
         fmt::format("cpu{}->{} AVERAGE MISS LATENCY: {} cycles", cpu, stats.name, ::print_ratio(stats.total_miss_latency_cycles, total_downstream_demands)));

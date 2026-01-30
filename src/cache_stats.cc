@@ -9,6 +9,12 @@ cache_stats operator-(cache_stats lhs, cache_stats rhs)
   result.pf_useless = lhs.pf_useless - rhs.pf_useless;
   result.pf_fill = lhs.pf_fill - rhs.pf_fill;
 
+  result.xor_compressions = lhs.xor_compressions - rhs.xor_compressions;
+  result.local_recoveries = lhs.local_recoveries - rhs.local_recoveries;
+  result.remote_recoveries = lhs.remote_recoveries - rhs.remote_recoveries;
+  result.direct_forwardings = lhs.direct_forwardings - rhs.direct_forwardings;
+  result.unxorings = lhs.unxorings - rhs.unxorings;
+
   result.hits = lhs.hits - rhs.hits;
   result.misses = lhs.misses - rhs.misses;
 

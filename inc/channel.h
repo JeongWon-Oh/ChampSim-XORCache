@@ -91,6 +91,12 @@ class channel
     champsim::address address;
   };
 
+  // [XOR Cache] Write hit notification for getM handling
+  struct write_hit_notify {
+    champsim::address address;
+    uint32_t cpu_id;
+  };
+
   template <typename R>
   bool do_add_queue(R& queue, std::size_t queue_size, const typename R::value_type& packet);
 
@@ -105,10 +111,12 @@ public:
   using request_type = request;
   using stats_type = cache_queue_stats;
   using invalidation_request_type = invalidation_request;
+  using write_hit_notify_type = write_hit_notify;
 
   std::deque<request_type> RQ{}, PQ{}, WQ{};
   std::deque<response_type> returned{};
   std::deque<invalidation_request_type> invalidation_queue{};
+  std::deque<write_hit_notify_type> write_hit_notify_queue{};  // [XOR Cache] getM notification
 
   stats_type sim_stats{}, roi_stats{};
 

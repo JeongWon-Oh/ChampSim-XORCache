@@ -215,12 +215,21 @@ bool CACHE::handle_fill(const mshr_type& fill_mshr)
                (fill_mshr.time_enqueued.time_since_epoch()) / clock_period, (current_time.time_since_epoch()) / clock_period);
   }
 
-  if (NAME == "LLC" && way != set_end && way->valid) {
-      // A. 기존 XOR 관계 끊기 (데이터가 사라지므로)
-      // if(NAME == "LLC") {
-      //     break_xor_relationship((uint32_t)set_idx, (uint32_t)way_idx);
-      // }
+  if(((NAME == "LLC") && (fill_mshr.type == access_type::WRITE || fill_mshr.type == access_type::RFO))) { //&& ((get_set_index(handle_pkt.address)==10) || (get_set_index(handle_pkt.address)==21)))) {
+    fmt::print("[{}] {} instr_id: {} address: {} v_address: {} data_cache_line[0]: 0x{:x} set: {} way: {} type: {} prefetch_metadata: {} cycle_enqueued: {} cycle: {}\n", NAME, __func__,
+               fill_mshr.instr_id, fill_mshr.address, fill_mshr.v_address, fill_mshr.data_promise->data_cache_line[0], get_set_index(fill_mshr.address), way_idx,
+               access_type_names.at(champsim::to_underlying(fill_mshr.type)), fill_mshr.data_promise->pf_metadata,
+               (fill_mshr.time_enqueued.time_since_epoch()) / clock_period, (current_time.time_since_epoch()) / clock_period);
+  }
 
+  if (NAME == "LLC" && way != set_end && way->valid) {
+    // A. 기존 XOR 관계 끊기 (데이터가 사라지므로)
+    long set_idx = get_set_index(fill_mshr.address);
+    if(xor_metadata[set_idx * NUM_WAY + way_idx].is_xored) {
+      break_xor_relationship((uint32_t)set_idx, (uint32_t)way_idx);
+      fmt::print("[UNXOR_eviction] Cycle: {} Addr: {:#x}\n", 
+                    current_time.time_since_epoch() / clock_period, way->address.to<uint64_t>());
+      
       // B. [핵심] 상위 캐시 Invalidation 요청 (Inclusive Policy)
       // 상위 캐시(L1/L2)에 있는 사본을 지우고, 만약 Dirty였다면 알려달라고 함
       bool was_upper_dirty = invalidate_entry(*way);
@@ -230,6 +239,26 @@ bool CACHE::handle_fill(const mshr_type& fill_mshr)
       if (was_upper_dirty) {
           way->dirty = true;
       }
+
+        way->valid = true;
+    } else {
+      uint32_t map_idx = get_sbl_hash(way->data_cache_line);
+      // Hash collision 대응: map_table이 실제로 이 블록을 가리키는 경우에만 무효화
+      if (map_table[map_idx].valid && 
+          map_table[map_idx].set_index == (uint32_t)set_idx && 
+          map_table[map_idx].way_index == (uint32_t)way_idx) {
+        fmt::print("[remove_from_MAPTABLE] Cycle: {} Addr: {:#x}\n", 
+                      current_time.time_since_epoch() / clock_period, way->address.to<uint64_t>());
+        map_table[map_idx].valid = false;
+      }
+    }
+  } else if (NAME == "LLC" && way != set_end && (fill_mshr.type == access_type::WRITE || fill_mshr.type == access_type::RFO)) {
+    long set_idx = get_set_index(fill_mshr.address);
+    if(xor_metadata[set_idx * NUM_WAY + way_idx].is_xored) {
+      break_xor_relationship((uint32_t)set_idx, (uint32_t)way_idx);
+      fmt::print("[UNXOR_getM] Cycle: {} Addr: {:#x}\n", 
+                    current_time.time_since_epoch() / clock_period, way->address.to<uint64_t>());
+    }
   }
 
   if (way != set_end && way->valid && way->dirty) {
@@ -255,6 +284,16 @@ bool CACHE::handle_fill(const mshr_type& fill_mshr)
     if (!success) {
       return false;
     }
+  }
+  // [XOR Cache] L2C에서 clean eviction 시에만 LLC에 putS 알림 (sharer 제거용)
+  // L1D eviction은 무시 (L2C가 백업 역할을 하므로)
+  else if (way != set_end && way->valid && !way->dirty && NAME == "cpu0_L2C") {
+    // L2C clean line eviction -> LLC에 invalidation 알림을 보냄 (putS)
+    auto invalidator = channel_type::invalidator_for(way->address);
+    invalidator(lower_level);
+    fmt::print("[L2C_CLEAN_EVICT] Cycle: {} Addr: {:#x} Set: {} Way: {} -> sending putS to LLC\n",
+               current_time.time_since_epoch() / clock_period, way->address.to<uint64_t>(),
+               get_set_index(way->address), std::distance(set_begin, way));
   }
 
   champsim::address evicting_address{};
@@ -289,6 +328,14 @@ bool CACHE::handle_fill(const mshr_type& fill_mshr)
       long set_idx = get_set_index(fill_mshr.address);
       uint32_t flat_idx = set_idx * NUM_WAY + way_idx;
       directory[flat_idx].sharers[fill_mshr.cpu] = true;
+      
+      // [XOR Cache] M 상태(dirty) 라인은 XOR 대상에서 제외 (exclusive)
+      // 논문: "Modified lines remain exclusive and cannot be XORed"
+      if (way->dirty) {
+          fmt::print("[XOR_SKIP_DIRTY] Cycle: {} Addr: {:#x} | Dirty line, skip XOR\n",
+                     current_time.time_since_epoch() / clock_period,
+                     fill_mshr.address.to<uint64_t>());
+      } else {
       uint32_t map_idx = get_sbl_hash(way->data_cache_line);
 
       if (map_table[map_idx].valid) {
@@ -301,7 +348,16 @@ bool CACHE::handle_fill(const mshr_type& fill_mshr)
           auto partner_block_it = std::next(std::begin(this->block), p_flat_idx);
 
           // 자기 자신과 매칭되는 경우 방지 & 파트너 유효성 검사
-          if (flat_idx != p_flat_idx && partner_block_it->valid) {
+          // 파트너도 dirty(M 상태)가 아니어야 XOR 가능
+          if (flat_idx != p_flat_idx && partner_block_it->valid && !partner_block_it->dirty) {
+            fmt::print("[XOR_SUCCESS] Cycle: {} NewAddr: {:#x} NewData: {:#x} | PartnerAddr: {:#x} PartnerData: {:#x} | Set: {} Way: {} <-> Set: {} Way: {}\n", 
+                  current_time.time_since_epoch() / clock_period, 
+                  fill_mshr.address.to<uint64_t>(), 
+                  way->data_cache_line[0],
+                  partner_block_it->address.to<uint64_t>(),
+                  partner_block_it->data_cache_line[0],
+                  set_idx, way_idx,
+                  p_set, p_way);
               // A. 메타데이터 업데이트 (XOR 관계 설정)
               xor_metadata[flat_idx] = {true, p_set, p_way};
               xor_metadata[p_flat_idx] = {true, (uint32_t)set_idx, (uint32_t)way_idx};
@@ -314,14 +370,25 @@ bool CACHE::handle_fill(const mshr_type& fill_mshr)
               // way->data_cache_line = xor_val;
               // partner_block_it->data_cache_line = xor_val;
               map_table[map_idx].valid = false;
+              sim_stats.xor_compressions++;
           } else {
-              // 파트너가 무효하거나 자기 자신인 경우 -> Map Table 갱신
+              // 파트너가 무효하거나 자기 자신이거나 dirty인 경우 -> Map Table 갱신
+              fmt::print("[XOR_UPDATE] Cycle: {} Addr: {:#x} Hash: {} | Partner Invalid/Self/Dirty -> Update MapTable\n", 
+                  current_time.time_since_epoch() / clock_period, 
+                  fill_mshr.address.to<uint64_t>(), 
+                  map_idx);
               map_table[map_idx] = {true, (uint32_t)set_idx, (uint32_t)way_idx};
           }
       } else {
           // [Miss] 후보 없음 -> Map Table에 등록하고 대기
+          fmt::print("[XOR_INSERT] Cycle: {} Addr: {:#x} Hash: {} Data: {:#x} | Inserted into MapTable\n", 
+               current_time.time_since_epoch() / clock_period, 
+               fill_mshr.address.to<uint64_t>(), 
+               map_idx,
+               way->data_cache_line[0]);
           map_table[map_idx] = {true, (uint32_t)set_idx, (uint32_t)way_idx};
       }
+      } // end if (!way->dirty)
     }
     // =================================================================
     // [XOR Cache Logic End]
@@ -351,10 +418,11 @@ bool CACHE::try_hit(const tag_lookup_type& handle_pkt)
   const auto hit = (way != set_end);
   const auto useful_prefetch = (hit && way->prefetch && !handle_pkt.prefetch_from_this);
 
-  if(((NAME == "LLC") && (handle_pkt.type == access_type::LOAD) && ((get_set_index(handle_pkt.address)==10) || (get_set_index(handle_pkt.address)==21)))) {
-    fmt::print("[{}] {} cpu: {} instr_id: {} address: {} v_address: {} data: {} set: {} way: {} ({}) type: {} cycle: {}\n", NAME, __func__, cpu, handle_pkt.instr_id,
-               handle_pkt.address, handle_pkt.v_address, handle_pkt.data, get_set_index(handle_pkt.address), std::distance(set_begin, way),
-               hit ? "HIT" : "MISS", access_type_names.at(champsim::to_underlying(handle_pkt.type)), current_time.time_since_epoch() / clock_period);
+  // [DEBUG] RFO/WRITE 요청 디버그 출력
+  if (NAME == "LLC" && (handle_pkt.type == access_type::WRITE || handle_pkt.type == access_type::RFO)) {
+    fmt::print("[LLC_DEBUG] {} Cycle: {} Addr: {:#x} Type: {} Hit: {}\n", __func__,
+               current_time.time_since_epoch() / clock_period, handle_pkt.address.to<uint64_t>(),
+               access_type_names.at(champsim::to_underlying(handle_pkt.type)), hit ? "HIT" : "MISS");
   }
 
   if constexpr (champsim::debug_print) {
@@ -381,8 +449,12 @@ bool CACHE::try_hit(const tag_lookup_type& handle_pkt)
       const auto way_idx = std::distance(set_begin, way);
       uint32_t flat_idx = set_idx * NUM_WAY + way_idx;
       
+      // [중요] Read hit 시 directory 업데이트 - 요청한 CPU를 sharer로 등록
+      // 이를 통해 Minimum Sharer Invariant 유지
+      directory[flat_idx].sharers[handle_pkt.cpu] = true;
+      
       if(xor_metadata[flat_idx].is_xored) {
-        fmt::print("hit on XORed\n");
+        // fmt::print("hit on XORed\n");
         // -----------------------------------------------------------
         // 1. Direct Forwarding 확인 (Target: Requested Line B)
         // -----------------------------------------------------------
@@ -396,7 +468,10 @@ bool CACHE::try_hit(const tag_lookup_type& handle_pkt)
 
         if (is_direct_forwarding) {
             // [Case B] Direct Forwarding
+            // fmt::print("[XOR_READ] Cycle: {} Addr: {:#x} -> Direct Forwarding\n", 
+            //     current_time.time_since_epoch() / clock_period, handle_pkt.address.to<uint64_t>());
             sim_stats.total_miss_latency_cycles += 21;
+            sim_stats.direct_forwardings++;
             // fmt::print(" -> Direct Forwarding\n");
         } 
         else {
@@ -422,24 +497,36 @@ bool CACHE::try_hit(const tag_lookup_type& handle_pkt)
 
             if(partner_is_local) {
                 // [Case A] Local Recovery
+                // fmt::print("[XOR_READ] Cycle: {} Addr: {:#x} -> Local Recovery (Partner in same core)\n", 
+                //     current_time.time_since_epoch() / clock_period, handle_pkt.address.to<uint64_t>());
                 sim_stats.total_miss_latency_cycles += 8;
+                sim_stats.local_recoveries++;
                 // fmt::print(" -> Local Recovery\n");
             }
             else if(partner_is_remote) {
                 // [Case C] Remote Recovery
+                fmt::print("[XOR_READ] Cycle: {} Addr: {:#x} -> Remote Recovery (Partner in other core)\n", 
+                    current_time.time_since_epoch() / clock_period, handle_pkt.address.to<uint64_t>());
                 sim_stats.total_miss_latency_cycles += 35;
+                sim_stats.remote_recoveries++;
                 // fmt::print(" -> Remote Recovery\n");
             }
             else {
-                // [Error Case] Minimum Sharer Invariant Violated
-                fmt::print("ERROR");
-                break_xor_relationship((uint32_t)set_idx, (uint32_t)way_idx);
+                // [Warning Case] 둘 다 S0 상태 - 현재 요청자가 유일한 sharer가 됨
+                // 이 상황은 directory 업데이트가 위에서 이미 수행되었으므로 
+                // Local Recovery로 처리 (현재 요청자가 partner의 sharer)
+                fmt::print("[XOR_READ_S0S0] Cycle: {} Addr: {:#x} -> Both S0, treating as Local Recovery\n",
+                    current_time.time_since_epoch() / clock_period, handle_pkt.address.to<uint64_t>());
+                sim_stats.total_miss_latency_cycles += 8;
+                sim_stats.local_recoveries++;
             }
         }
         // -----------------------------------------------------------
         // 3. UnXORing (Write 시)
         // -----------------------------------------------------------
         if (handle_pkt.type == access_type::WRITE || handle_pkt.type == access_type::RFO) {
+          fmt::print("[UNXOR_getM] Cycle: {} Addr: {:#x}\n", 
+                    current_time.time_since_epoch() / clock_period, handle_pkt.address.to<uint64_t>());
           break_xor_relationship((uint32_t)set_idx, (uint32_t)way_idx);
         }
       }
@@ -450,6 +537,19 @@ bool CACHE::try_hit(const tag_lookup_type& handle_pkt)
     // response_type response{handle_pkt.address, handle_pkt.v_address, way->data, metadata_thru, handle_pkt.instr_depend_on_me};
     for (auto* ret : handle_pkt.to_return) {
       ret->push_back(response);
+    }
+
+    // [XOR Cache] L1D/L2C write hit → LLC getM 알림
+    // 주의: add_wq()는 응답을 기대하므로 MSHR 문제 발생
+    // 해결: write_hit_notify_queue 사용 (응답 없음, getM 전용)
+    if ((handle_pkt.type == access_type::WRITE || handle_pkt.type == access_type::RFO) 
+        && !way->dirty  // S→M 전환 시에만
+        && (NAME == "cpu0_L1D" || NAME == "cpu0_L2C")) {
+      fmt::print("[{}_WRITE_HIT] Cycle: {} Addr: {:#x} -> S->M transition (getM to LLC)\n",
+                 NAME, current_time.time_since_epoch() / clock_period, handle_pkt.address.to<uint64_t>());
+      // write_hit_notify_queue를 사용해 LLC에 getM 알림
+      channel_type::write_hit_notify_type notify{handle_pkt.address, handle_pkt.cpu};
+      lower_level->write_hit_notify_queue.push_back(notify);
     }
 
     way->dirty |= (handle_pkt.type == access_type::WRITE);
@@ -596,68 +696,68 @@ auto CACHE::initiate_tag_check(champsim::channel* ul)
 
 long CACHE::operate()
 {
-  if(llc_print_status && NAME == "LLC" && cpu == 1) {
-    std::vector<long> sets_to_check = {10, 21};
-    for (long set_idx : sets_to_check) {
-        fmt::print("===== CPU{} Cache Set {} Status at Cycle {} =====\n", cpu, set_idx, current_time.time_since_epoch() / clock_period);
-        auto set_begin = std::next(std::begin(this->block), set_idx * this->NUM_WAY);
-        auto set_end = std::next(set_begin, this->NUM_WAY);
-        int way = 0;
-        // for (auto block_it = set_begin; block_it != set_end; ++block_it) {
-        //     fmt::print("  [Way {}] Valid: {}, Address: 0x{:x} V_Address: 0x{:x} data: {}\n", way, block_it->valid, block_it->address.to<uint64_t>(), block_it->v_address.to<uint64_t>(), block_it->data);
-        //     way++;
-        // }
-        for (auto block_it = set_begin; block_it != set_end; ++block_it) {
-          fmt::print("  [Way {}] Valid: {}, Address: 0x{:x} V_Address: 0x{:x} data: {} cache_line: [{}]\n",
-          way, block_it->valid, block_it->address.to<uint64_t>(), block_it->v_address.to<uint64_t>(), block_it->data,
-          [&]() {
-                std::string res;
-                for (size_t i = 0; i < 8; ++i) {
-                    // 각 요소를 16진수 문자열로 변환하여 이어 붙임
-                    res += fmt::format("{:#018x}", block_it->data_cache_line[i]);
-                    if (i < 7) res += ", ";
-                }
-                return res;
-            }() // <--- 람다를 즉시 실행하여 결과 문자열(std::string)을 리턴받음
-          );
-            way++;
-        }
-    }
-    llc_print_status = false;
-  }
-  // if(NAME == "cpu0_L1D" || NAME == "cpu0_L2C" || NAME == "LLC") {
-
-
-  // if(NAME == "LLC") {
-  //   std::vector<long> sets_to_check = {0};
+  // if(llc_print_status && NAME == "LLC" && cpu == 1) {
+  //   std::vector<long> sets_to_check = {10, 21};
   //   for (long set_idx : sets_to_check) {
-  //       fmt::print("===== CPU{} {} Cache Set {} Status at Cycle {} =====\n", cpu, NAME, set_idx, current_time.time_since_epoch() / clock_period);
+  //       fmt::print("===== CPU{} Cache Set {} Status at Cycle {} =====\n", cpu, set_idx, current_time.time_since_epoch() / clock_period);
   //       auto set_begin = std::next(std::begin(this->block), set_idx * this->NUM_WAY);
   //       auto set_end = std::next(set_begin, this->NUM_WAY);
   //       int way = 0;
+  //       // for (auto block_it = set_begin; block_it != set_end; ++block_it) {
+  //       //     fmt::print("  [Way {}] Valid: {}, Address: 0x{:x} V_Address: 0x{:x} data: {}\n", way, block_it->valid, block_it->address.to<uint64_t>(), block_it->v_address.to<uint64_t>(), block_it->data);
+  //       //     way++;
+  //       // }
   //       for (auto block_it = set_begin; block_it != set_end; ++block_it) {
-  //           fmt::print("  [Way {}] Valid: {}, Address: 0x{:x} V_Address: 0x{:x} data: {} cache_line: [{}]\n",
-  //   way,
-  //   block_it->valid,
-  //   block_it->address.to<uint64_t>(),
-  //   block_it->v_address.to<uint64_t>(),
-  //   block_it->data,
-  //   // --- 여기서부터 수정 ---
-  //   [&]() {
-  //       std::string res;
-  //       for (size_t i = 0; i < 8; ++i) {
-  //           // 각 요소를 16진수 문자열로 변환하여 이어 붙임
-  //           res += fmt::format("{:#018x}", block_it->data_cache_line[i]);
-  //           if (i < 7) res += ", ";
+  //         fmt::print("  [Way {}] Valid: {}, Address: 0x{:x} V_Address: 0x{:x} data: {} cache_line: [{}]\n",
+  //         way, block_it->valid, block_it->address.to<uint64_t>(), block_it->v_address.to<uint64_t>(), block_it->data,
+  //         [&]() {
+  //               std::string res;
+  //               for (size_t i = 0; i < 8; ++i) {
+  //                   // 각 요소를 16진수 문자열로 변환하여 이어 붙임
+  //                   res += fmt::format("{:#018x}", block_it->data_cache_line[i]);
+  //                   if (i < 7) res += ", ";
+  //               }
+  //               return res;
+  //           }() // <--- 람다를 즉시 실행하여 결과 문자열(std::string)을 리턴받음
+  //         );
+  //           way++;
   //       }
-  //       return res;
-  //   }() // <--- 람다를 즉시 실행하여 결과 문자열(std::string)을 리턴받음
-  //   // -----------------------
-  //     );
-  //       way++;
-  //     }
   //   }
+  //   llc_print_status = false;
   // }
+  // if(NAME == "cpu0_L1D" || NAME == "cpu0_L2C" || NAME == "LLC") {
+
+
+  if(NAME == "LLC") {
+    std::vector<long> sets_to_check = {};
+    for (long set_idx : sets_to_check) {
+        fmt::print("===== CPU{} {} Cache Set {} Status at Cycle {} =====\n", cpu, NAME, set_idx, current_time.time_since_epoch() / clock_period);
+        auto set_begin = std::next(std::begin(this->block), set_idx * this->NUM_WAY);
+        auto set_end = std::next(set_begin, this->NUM_WAY);
+        int way = 0;
+        for (auto block_it = set_begin; block_it != set_end; ++block_it) {
+            fmt::print("  [Way {}] Valid: {}, Address: 0x{:x} V_Address: 0x{:x} data: {} cache_line: [{}]\n",
+    way,
+    block_it->valid,
+    block_it->address.to<uint64_t>(),
+    block_it->v_address.to<uint64_t>(),
+    block_it->data,
+    // --- 여기서부터 수정 ---
+    [&]() {
+        std::string res;
+        for (size_t i = 0; i < 8; ++i) {
+            // 각 요소를 16진수 문자열로 변환하여 이어 붙임
+            res += fmt::format("{:#018x}", block_it->data_cache_line[i]);
+            if (i < 7) res += ", ";
+        }
+        return res;
+    }() // <--- 람다를 즉시 실행하여 결과 문자열(std::string)을 리턴받음
+    // -----------------------
+      );
+        way++;
+      }
+    }
+  }
 
   long progress{0};
 
@@ -684,11 +784,41 @@ long CACHE::operate()
     lower_translate->returned.clear();
   }
 
+  // [Inclusive Policy] LLC eviction 시 상위 캐시도 invalidate하기 위한 기존 코드
   std::for_each(std::cbegin(lower_level->invalidation_queue), std::cend(lower_level->invalidation_queue),
                 [this](const auto& inv) {
                     this->invalidate_entry(inv.address); 
                 });
   lower_level->invalidation_queue.clear();
+
+  // [XOR Cache] LLC에서 상위 캐시(L2C)로부터 온 putS 처리
+  // L2C가 clean eviction 시 lower_level(LLC 채널)의 invalidation_queue에 넣음
+  // LLC는 upper_levels를 통해 이를 읽어야 함
+  if (NAME == "LLC") {
+    for (auto* ul : upper_levels) {
+      for (const auto& inv : ul->invalidation_queue) {
+        this->invalidate_entry(inv.address);
+      }
+      ul->invalidation_queue.clear();
+      
+      // [XOR Cache] L2C로부터 온 getM (write hit) 알림 처리
+      for (const auto& notify : ul->write_hit_notify_queue) {
+        this->handle_getM(notify.address, notify.cpu_id);
+      }
+      ul->write_hit_notify_queue.clear();
+    }
+  }
+  
+  // [XOR Cache] L2C에서 L1D로부터 온 getM 알림을 LLC로 전달
+  if (NAME == "cpu0_L2C") {
+    for (auto* ul : upper_levels) {
+      for (const auto& notify : ul->write_hit_notify_queue) {
+        // L1D의 알림을 LLC로 전달
+        lower_level->write_hit_notify_queue.push_back(notify);
+      }
+      ul->write_hit_notify_queue.clear();
+    }
+  }
 
   // Perform fills
   champsim::bandwidth fill_bw{MAX_FILL};
@@ -789,6 +919,42 @@ uint32_t CACHE::get_sbl_hash(const std::array<uint64_t, 8>& data) {
     return hash % MAP_TABLE_SIZE;
 }
 
+// [XOR Cache] getM 처리: 상위 캐시에서 S→M 전환 시 호출
+void CACHE::handle_getM(champsim::address addr, uint32_t cpu_id) {
+    auto [begin, end] = get_set_span(addr);
+    auto way = std::find_if(begin, end, matches_address(addr));
+    
+    if (way == end) {
+        fmt::print("[LLC_GETM_MISS] Cycle: {} Addr: {:#x} not found in LLC\n",
+                   current_time.time_since_epoch() / clock_period, addr.to<uint64_t>());
+        return;
+    }
+    
+    long set_idx = get_set_index(addr);
+    long way_idx = std::distance(begin, way);
+    uint32_t flat_idx = set_idx * NUM_WAY + way_idx;
+    
+    fmt::print("[LLC_GETM] Cycle: {} Addr: {:#x} Set: {} Way: {} CPU: {} is_xored: {}\n",
+               current_time.time_since_epoch() / clock_period, addr.to<uint64_t>(),
+               set_idx, way_idx, cpu_id, xor_metadata[flat_idx].is_xored);
+    
+    // Directory 업데이트: 해당 코어가 M 상태가 됨 (다른 sharer 무효화)
+    // (실제로는 MESI에서 getM 받으면 다른 코어에 invalidate 보내야 함)
+    // 싱글 코어에서는 단순히 sharer 정보만 업데이트
+    for (size_t i = 0; i < directory[flat_idx].sharers.size(); ++i) {
+        directory[flat_idx].sharers[i] = (i == cpu_id);  // 요청 코어만 sharer
+    }
+    
+    // [XOR Cache] XORed 라인에 getM 발생 시 unXOR
+    // MSI 기반 프로토콜에서 getM은 exclusive access 요구
+    // XORed 상태에서는 데이터 복구가 필요하므로 unXOR 필수
+    if (xor_metadata[flat_idx].is_xored) {
+        fmt::print("[UNXOR_getM] Cycle: {} Addr: {:#x} | getM received -> unXORing\n",
+                   current_time.time_since_epoch() / clock_period, addr.to<uint64_t>());
+        break_xor_relationship((uint32_t)set_idx, (uint32_t)way_idx);
+    }
+}
+
 void CACHE::break_xor_relationship(uint32_t set, uint32_t way) {
     uint32_t idx = set * NUM_WAY + way;
     
@@ -799,6 +965,51 @@ void CACHE::break_xor_relationship(uint32_t set, uint32_t way) {
 
         xor_metadata[p_idx].is_xored = false;
         xor_metadata[idx].is_xored = false;
+
+        sim_stats.unxorings++;
+
+        // =================================================================
+        // [Re-insertion] 논문 4.4.3: recovered line B가 re-insertion 시도
+        // =================================================================
+        auto partner_block_it = std::next(std::begin(this->block), p_idx);
+        if (partner_block_it->valid) {
+            uint32_t map_idx = get_sbl_hash(partner_block_it->data_cache_line);
+
+            if (map_table[map_idx].valid) {
+                // Map Table에 후보가 있음 -> XOR 압축 재시도
+                uint32_t c_set = map_table[map_idx].set_index;
+                uint32_t c_way = map_table[map_idx].way_index;
+                uint32_t c_flat_idx = c_set * NUM_WAY + c_way;
+
+                auto candidate_block_it = std::next(std::begin(this->block), c_flat_idx);
+
+                // 자기 자신이 아니고 & 유효하고 & XOR되지 않은 블록과 매칭
+                if (p_idx != c_flat_idx && candidate_block_it->valid && !xor_metadata[c_flat_idx].is_xored) {
+                    // 새로운 XOR 관계 형성
+                    xor_metadata[p_idx] = {true, c_set, c_way};
+                    xor_metadata[c_flat_idx] = {true, p_set, p_way};
+                    map_table[map_idx].valid = false;
+                    sim_stats.xor_compressions++;
+                    fmt::print("[RE-XOR_SUCCESS] Cycle: {} PartnerAddr: {:#x} PartnerData: {:#x} | CandidateAddr: {:#x} CandidateData: {:#x} | Set: {} Way: {} <-> Set: {} Way: {}\n",
+                          current_time.time_since_epoch() / clock_period, 
+                          partner_block_it->address.to<uint64_t>(),
+                          partner_block_it->data_cache_line[0],
+                          candidate_block_it->address.to<uint64_t>(),
+                          candidate_block_it->data_cache_line[0],
+                          p_set, p_way, c_set, c_way);
+                } else {
+                    // 후보가 부적합 -> Map Table 갱신
+                    map_table[map_idx] = {true, p_set, p_way};
+                    fmt::print("[RE-XOR_UPDATE] Cycle: {} Partner Set: {} Way: {} | Updated MapTable\n",
+                          current_time.time_since_epoch() / clock_period, p_set, p_way);
+                }
+            } else {
+                // Map Table에 후보 없음 -> 등록
+                map_table[map_idx] = {true, p_set, p_way};
+                fmt::print("[RE-XOR_INSERT] Cycle: {} Partner Set: {} Way: {} | Inserted into MapTable\n",
+                      current_time.time_since_epoch() / clock_period, p_set, p_way);
+            }
+        }
     }
 }
 
@@ -844,6 +1055,69 @@ long CACHE::invalidate_entry(champsim::address inval_addr)
   auto inv_way = std::find_if(begin, end, matches_address(inval_addr));
 
   if (inv_way != end) {
+    // LLC에서는 블록을 무효화하지 않고, directory만 업데이트 (putS 처리)
+    if (NAME == "LLC") {
+      long set_idx = get_set_index(inval_addr);
+      long way_idx = std::distance(begin, inv_way);
+      uint32_t flat_idx = set_idx * NUM_WAY + way_idx;
+      
+      fmt::print("[LLC_PUTS_RECEIVED] Cycle: {} Addr: {:#x} Set: {} Way: {} flat_idx: {}\n",
+                 current_time.time_since_epoch() / clock_period, inval_addr.to<uint64_t>(),
+                 set_idx, way_idx, flat_idx);
+      
+      // 모든 sharer 제거 (상위 캐시에서 evict되었으므로)
+      bool had_sharers = false;
+      for (size_t i = 0; i < directory[flat_idx].sharers.size(); ++i) {
+        if (directory[flat_idx].sharers[i]) {
+          had_sharers = true;
+          directory[flat_idx].sharers[i] = false;
+        }
+      }
+      
+      fmt::print("[LLC_PUTS_DEBUG] had_sharers: {} is_xored: {}\n", had_sharers, xor_metadata[flat_idx].is_xored);
+      
+      // XORed 라인인 경우 Minimum Sharer Invariant 체크
+      if (xor_metadata[flat_idx].is_xored && had_sharers) {
+        uint32_t p_set = xor_metadata[flat_idx].partner_set;
+        uint32_t p_way = xor_metadata[flat_idx].partner_way;
+        uint32_t p_flat_idx = p_set * NUM_WAY + p_way;
+        
+        // 현재 라인의 sharer 확인
+        bool current_has_sharer = false;
+        for (size_t i = 0; i < directory[flat_idx].sharers.size(); ++i) {
+          if (directory[flat_idx].sharers[i]) {
+            current_has_sharer = true;
+            break;
+          }
+        }
+        
+        // 파트너 라인의 sharer 확인
+        bool partner_has_sharer = false;
+        if (p_flat_idx < directory.size()) {
+          for (size_t i = 0; i < directory[p_flat_idx].sharers.size(); ++i) {
+            if (directory[p_flat_idx].sharers[i]) {
+              partner_has_sharer = true;
+              break;
+            }
+          }
+        }
+        
+        fmt::print("[LLC_PUTS_DEBUG] Partner: Set {} Way {} | current_has_sharer: {} partner_has_sharer: {}\n",
+                   p_set, p_way, current_has_sharer, partner_has_sharer);
+        
+        // 둘 다 sharer가 없으면 (S0, S0) → unXOR 필요!
+        if (!current_has_sharer && !partner_has_sharer) {
+          fmt::print("[UNXOR_lastPutS] Cycle: {} Addr: {:#x} | Both lines S0 (no sharers) -> unXORing\n",
+                     current_time.time_since_epoch() / clock_period, inval_addr.to<uint64_t>());
+          break_xor_relationship((uint32_t)set_idx, (uint32_t)way_idx);
+        }
+      }
+      
+      // LLC에서는 블록 자체는 유효하게 유지 (S0 상태)
+      return std::distance(begin, inv_way);
+    }
+    
+    // 다른 캐시(L1/L2)에서는 기존처럼 무효화
     inv_way->valid = false;
   }
 
@@ -1196,6 +1470,12 @@ void CACHE::end_phase(unsigned finished_cpu)
   roi_stats.pf_useful = sim_stats.pf_useful;
   roi_stats.pf_useless = sim_stats.pf_useless;
   roi_stats.pf_fill = sim_stats.pf_fill;
+
+  roi_stats.xor_compressions = sim_stats.xor_compressions;
+  roi_stats.local_recoveries = sim_stats.local_recoveries;
+  roi_stats.remote_recoveries = sim_stats.remote_recoveries;
+  roi_stats.direct_forwardings = sim_stats.direct_forwardings;
+  roi_stats.unxorings = sim_stats.unxorings;
 
   for (auto* ul : upper_levels) {
     ul->roi_stats.RQ_ACCESS = ul->sim_stats.RQ_ACCESS;

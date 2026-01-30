@@ -203,6 +203,7 @@ public:
 
   uint32_t get_sbl_hash(const std::array<uint64_t, 8>& data); // Map Function
   void break_xor_relationship(uint32_t set, uint32_t way);    // UnXORing
+  void handle_getM(champsim::address addr, uint32_t cpu_id);  // [XOR Cache] getM from upper cache
 
   using stats_type = cache_stats;
 
