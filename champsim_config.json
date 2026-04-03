@@ -3,7 +3,7 @@
   "block_size": 64,
   "page_size": 131072,
   "heartbeat_frequency": 10000000,
-  "num_cores": 1,
+  "num_cores": 2,
 
   "ooo_cpu": [
     {
@@ -40,8 +40,8 @@
   },
 
   "L1I": {
-    "sets": 4,
-    "ways": 2,
+    "sets": 128,
+    "ways": 4,
     "rq_size": 64,
     "wq_size": 64,
     "pq_size": 32,
@@ -56,8 +56,8 @@
   },
 
   "L1D": {
-    "sets": 4,
-    "ways": 2,
+    "sets": 128,
+    "ways": 4,
     "rq_size": 64,
     "wq_size": 64,
     "pq_size": 8,
@@ -72,8 +72,8 @@
   },
 
   "L2C": {
-    "sets": 4,
-    "ways": 2,
+    "sets": 512,
+    "ways": 8,
     "rq_size": 32,
     "wq_size": 32,
     "pq_size": 16,
@@ -143,7 +143,7 @@
 
   "LLC": {
     "frequency": 4000,
-    "sets": 16,
+    "sets": 2048,
     "ways": 16,
     "rq_size": 32,
     "wq_size": 32,

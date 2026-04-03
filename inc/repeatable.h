@@ -38,13 +38,13 @@ struct repeatable {
     // Reopen trace if we've reached the end of the file
     if (intern_.eof()) {
       fmt::print("*** Reached end of trace: {}\n", args_);
-      intern_ = T{std::apply([](auto... x) { return T{x...}; }, args_)};
+      // intern_ = T{std::apply([](auto... x) { return T{x...}; }, args_)};
     }
 
     return intern_();
   }
 
-  [[nodiscard]] bool eof() const { return false; }
+  [[nodiscard]] bool eof() const { return intern_.eof(); }//false; }
 };
 } // namespace champsim
 

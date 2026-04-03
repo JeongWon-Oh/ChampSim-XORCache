@@ -89,6 +89,7 @@ class channel
 
   struct invalidation_request {
     champsim::address address;
+    uint32_t source_cpu = std::numeric_limits<uint32_t>::max(); // CPU that sent the putS (max = unknown/invalidation)
   };
 
   // [XOR Cache] Write hit notification for getM handling
@@ -141,6 +142,16 @@ public:
   static auto invalidator_for(T&& request)
   {
     return [req = invalidation_request_type{request}](channel* ul) {
+      ul->invalidation_queue.push_back(req);
+    };
+  }
+
+  // [L2C→LLC putS] source CPU를 포함하는 invalidator
+  // L2C clean eviction 시 LLC directory에서 특정 CPU의 sharer만 제거하기 위해 사용
+  template <typename T>
+  static auto invalidator_for(T&& request, uint32_t cpu_id)
+  {
+    return [req = invalidation_request_type{request, cpu_id}](channel* ul) {
       ul->invalidation_queue.push_back(req);
     };
   }

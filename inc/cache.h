@@ -29,10 +29,29 @@
 #include <iterator> // for size
 #include <limits>   // for numeric_limits
 #include <memory>
+#include <random>
 #include <stdexcept>
 #include <string>
 #include <type_traits>
 #include <vector>
+
+// ====== Map Function Configuration ======
+// Four hash function types for XOR Cache map table
+enum class MapHashFunction {
+    LSH_RP,   // Locality-Sensitive Hash - Random Projection
+    LSH_BS,   // Locality-Sensitive Hash - Bit Sampling
+    BL,       // Baseline Byte Labeling
+    SBL       // Sparse Byte Labeling
+};
+
+static constexpr uint32_t MAP_HASH_BITS = 7;           // Number of bits in map value (2^7 = 128 entries)
+static constexpr uint32_t CACHE_LINE_BYTES = 64;       // 8 words * 8 bytes
+static constexpr uint32_t CACHE_LINE_BITS = 512;       // 64 * 8
+static constexpr uint32_t WORDS_PER_LINE = 8;
+static constexpr uint32_t BYTES_PER_WORD = 8;
+static constexpr uint32_t SBL_BYTES_PER_WORD = 6;      // MSB 6 bytes per word (skip 2 LSBs)
+static constexpr uint32_t SBL_TOTAL_BYTES = WORDS_PER_LINE * SBL_BYTES_PER_WORD;  // 48
+static constexpr uint32_t MAP_HASH_SEED = 42;          // Fixed seed for reproducibility
 
 #include "address.h"
 #include "bandwidth.h"
@@ -93,6 +112,7 @@ class CACHE : public champsim::operable
 
   struct DIR_ENTRY {
     std::vector<bool> sharers;
+    int exclusive_owner = -1;  // -1: no exclusive owner (S/S0), >=0: CPU ID with M state
   };
 
   struct XOR_META {
@@ -155,6 +175,7 @@ public:
 
 private:
   static BLOCK fill_block(mshr_type mshr, uint32_t metadata);
+  static BLOCK fill_block_write(mshr_type mshr, uint32_t metadata);
   using set_type = std::vector<BLOCK>;
 
   std::pair<set_type::iterator, set_type::iterator> get_set_span(champsim::address address);
@@ -201,8 +222,31 @@ public:
   std::vector<MAP_ENTRY> map_table;
   const uint32_t MAP_TABLE_SIZE = 128;
 
-  uint32_t get_sbl_hash(const std::array<uint64_t, 8>& data); // Map Function
+  // [L2C Directory] Tracks whether each L2C block also exists in upper-level caches (L1D/L1I)
+  // Used to maintain inclusive policy (L1 ⊆ L2 ⊆ LLC) and enable accurate S0 state detection
+  std::vector<bool> l2c_upper_present;
+
+  // ====== Map Hash Functions ======
+  MapHashFunction active_hash_function = MapHashFunction::BL;
+
+  // Precomputed random tables for LSH-RP and LSH-BS (initialized once)
+  bool hash_tables_initialized = false;
+  std::array<std::array<int8_t, CACHE_LINE_BYTES>, MAP_HASH_BITS> lsh_rp_projection;  // Random projection vectors (+1/-1)
+  std::array<uint32_t, MAP_HASH_BITS> lsh_bs_bit_positions;                           // Random bit positions for bit sampling
+  std::array<uint32_t, CACHE_LINE_BYTES> bl_permutation;                              // Permutation table for BL
+  std::array<uint32_t, SBL_TOTAL_BYTES> sbl_permutation;                              // Permutation table for SBL
+
+  void init_hash_tables();  // Initialize random tables
+
+  uint32_t get_map_hash(const std::array<uint64_t, 8>& data);       // Dispatch to active hash function
+  uint32_t get_lsh_rp_hash(const std::array<uint64_t, 8>& data);    // LSH - Random Projection
+  uint32_t get_lsh_bs_hash(const std::array<uint64_t, 8>& data);    // LSH - Bit Sampling
+  uint32_t get_bl_hash(const std::array<uint64_t, 8>& data);        // Baseline Byte Labeling
+  uint32_t get_sbl_hash(const std::array<uint64_t, 8>& data);       // Sparse Byte Labeling
+
   void break_xor_relationship(uint32_t set, uint32_t way);    // UnXORing
+  bool is_line_modified(uint32_t flat_idx);                   // Check if line is Modified (exactly 1 sharer = exclusive owner)
+  bool is_line_s0(uint32_t flat_idx);                         // Check if line is S0 (no sharers, LLC only)
   void handle_getM(champsim::address addr, uint32_t cpu_id);  // [XOR Cache] getM from upper cache
 
   using stats_type = cache_stats;
@@ -247,6 +291,7 @@ public:
   [[deprecated("This function should not be used to access the blocks directly.")]] [[nodiscard]] uint64_t get_way(uint64_t address, uint64_t set) const;
 
   long invalidate_entry(champsim::address inval_addr);
+  long invalidate_entry(champsim::address inval_addr, uint32_t source_cpu);  // Per-CPU putS handling
   bool invalidate_entry(BLOCK& inval_block);
   bool prefetch_line(champsim::address pf_addr, bool fill_this_level, uint32_t prefetch_metadata);
 
@@ -367,6 +412,7 @@ public:
     }
     xor_metadata.resize(NUM_SET * NUM_WAY);
     map_table.resize(MAP_TABLE_SIZE);
+    l2c_upper_present.resize(NUM_SET * NUM_WAY, false);
   }
 
   CACHE(const CACHE&) = delete;

@@ -151,24 +151,23 @@ long DRAM_CHANNEL::finish_dbus_request()
     if (!pkt_.to_return.empty()) {
         uint64_t v_addr = pkt_.v_address.to<uint64_t>();
         uint64_t block_start_addr = v_addr & ~(static_cast<uint64_t>(BLOCK_SIZE) - 1);
-        
-        // 디버그: 테스트 데이터 주소(0x7fa2baed6xxx)인 경우만 출력
-        if ((v_addr >> 12) == (0x7fa2baed6000ULL >> 12)) {
-            fmt::print("[DRAM_DEBUG_TEST] v_addr: 0x{:x} block_start: 0x{:x}\n", v_addr, block_start_addr);
-        }
+        uint64_t p_addr = pkt_.address.to<uint64_t>();
+        bool is_translation = ((p_addr & (PAGE_SIZE - 1)) != (v_addr & (PAGE_SIZE - 1)));
 
         for (int i = 0; i < 8; ++i) {
+          if (is_translation) {
+            pkt_.data_cache_line[i] = 0;
+          } else {
             uint64_t curr_addr = block_start_addr + (i * 8);
 
             if (PMEM.find(curr_addr) != PMEM.end()) {
+              // fmt::print("[DRAM] Returning data for address {:#x} from PMEM: {:#x}\n", curr_addr, PMEM[curr_addr]);
               pkt_.data_cache_line[i] = PMEM[curr_addr];
-              // 테스트 데이터 발견 시 출력
-              if (PMEM[curr_addr] == 0xAAAAAAAAAAAAAAAAULL) {
-                  fmt::print("[PMEM_HIT] addr: 0x{:x} data: 0x{:x}\n", curr_addr, PMEM[curr_addr]);
-              }
             } else {
-                pkt_.data_cache_line[i] = 0; // 데이터 없으면 0으로 초기화
+              // fmt::print("[DRAM] Warning: Address {:#x} not found in PMEM. Returning 0.\n", curr_addr);
+              pkt_.data_cache_line[i] = 0; // 데이터 없으면 0으로 초기화
             }
+          }
         }
     }
 
