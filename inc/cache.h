@@ -67,7 +67,7 @@ static constexpr uint32_t MAP_HASH_SEED = 42;          // Fixed seed for reprodu
 #include "waitable.h"
 
 extern bool llc_print_status;
-extern bool XOR_CACHE_MODE;
+inline bool XOR_CACHE_MODE = false;
 
 class CACHE : public champsim::operable
 {

@@ -251,31 +251,33 @@ bool CACHE::handle_fill(const mshr_type& fill_mshr)
     // [XOR Cache] exclusive_owner 초기화 (eviction)
     directory[evict_flat_idx].exclusive_owner = -1;
     
-    if(xor_metadata[evict_flat_idx].is_xored) {
-      break_xor_relationship((uint32_t)set_idx, (uint32_t)way_idx);
-      fmt::print("[UNXOR_eviction] Cycle: {} Addr: {:#x}\n", 
-                    current_time.time_since_epoch() / clock_period, way->address.to<uint64_t>());
-      
-      // B. [핵심] 상위 캐시 Invalidation 요청 (Inclusive Policy)
-      // 상위 캐시(L1/L2)에 있는 사본을 지우고, 만약 Dirty였다면 알려달라고 함
-      bool was_upper_dirty = invalidate_entry(*way);
-
-      // C. 상위 캐시가 Dirty였다면, LLC 블록도 Dirty로 승격
-      // (그래야 아래 Writeback 로직에서 메모리로 올바르게 내려감)
-      if (was_upper_dirty) {
-          way->dirty = true;
-      }
-
-        way->valid = true;
-    } else {
-      uint32_t map_idx = get_map_hash(way->data_cache_line);
-      // Hash collision 대응: map_table이 실제로 이 블록을 가리키는 경우에만 무효화
-      if (map_table[map_idx].valid && 
-          map_table[map_idx].set_index == (uint32_t)set_idx && 
-          map_table[map_idx].way_index == (uint32_t)way_idx) {
-        fmt::print("[remove_from_MAPTABLE] Cycle: {} Addr: {:#x}\n", 
+    if(XOR_CACHE_MODE) {
+      if(xor_metadata[evict_flat_idx].is_xored) {
+        break_xor_relationship((uint32_t)set_idx, (uint32_t)way_idx);
+        fmt::print("[UNXOR_eviction] Cycle: {} Addr: {:#x}\n", 
                       current_time.time_since_epoch() / clock_period, way->address.to<uint64_t>());
-        map_table[map_idx].valid = false;
+        
+        // B. [핵심] 상위 캐시 Invalidation 요청 (Inclusive Policy)
+        // 상위 캐시(L1/L2)에 있는 사본을 지우고, 만약 Dirty였다면 알려달라고 함
+        bool was_upper_dirty = invalidate_entry(*way);
+
+        // C. 상위 캐시가 Dirty였다면, LLC 블록도 Dirty로 승격
+        // (그래야 아래 Writeback 로직에서 메모리로 올바르게 내려감)
+        if (was_upper_dirty) {
+            way->dirty = true;
+        }
+
+          way->valid = true;
+      } else {
+        uint32_t map_idx = get_map_hash(way->data_cache_line);
+        // Hash collision 대응: map_table이 실제로 이 블록을 가리키는 경우에만 무효화
+        if (map_table[map_idx].valid && 
+            map_table[map_idx].set_index == (uint32_t)set_idx && 
+            map_table[map_idx].way_index == (uint32_t)way_idx) {
+          fmt::print("[remove_from_MAPTABLE] Cycle: {} Addr: {:#x}\n", 
+                        current_time.time_since_epoch() / clock_period, way->address.to<uint64_t>());
+          map_table[map_idx].valid = false;
+        }
       }
     }
   } 
@@ -302,9 +304,9 @@ bool CACHE::handle_fill(const mshr_type& fill_mshr)
         invalidator(ul);
       }
       l2c_upper_present[flat_idx] = false;
-      fmt::print("[L2C_EVICT_INVAL_L1] Cycle: {} Addr: {:#x} Set: {} Way: {} -> invalidating L1 caches (inclusive policy)\n",
-                 current_time.time_since_epoch() / clock_period, way->address.to<uint64_t>(),
-                 set_idx, way_idx);
+      // fmt::print("[L2C_EVICT_INVAL_L1] Cycle: {} Addr: {:#x} Set: {} Way: {} -> invalidating L1 caches (inclusive policy)\n",
+      //            current_time.time_since_epoch() / clock_period, way->address.to<uint64_t>(),
+      //            set_idx, way_idx);
     }
   }
 
@@ -340,18 +342,18 @@ bool CACHE::handle_fill(const mshr_type& fill_mshr)
     // L2C clean line eviction -> LLC에 putS 알림 (source_cpu 포함)
     auto invalidator = channel_type::invalidator_for(way->address, cpu);
     invalidator(lower_level);
-    fmt::print("[L2C_CLEAN_EVICT] Cycle: {} CPU: {} Addr: {:#x} Set: {} Way: {} -> sending putS to LLC\n",
-               current_time.time_since_epoch() / clock_period, cpu, way->address.to<uint64_t>(),
-               get_set_index(way->address), std::distance(set_begin, way));
+    // fmt::print("[L2C_CLEAN_EVICT] Cycle: {} CPU: {} Addr: {:#x} Set: {} Way: {} -> sending putS to LLC\n",
+    //            current_time.time_since_epoch() / clock_period, cpu, way->address.to<uint64_t>(),
+    //            get_set_index(way->address), std::distance(set_begin, way));
   }
   // [L1 Inclusive Policy] L1에서 clean eviction 시 L2C에 putS 알림 (l2c_upper_present 갱신용)
   // L1D/L1I가 공간 부족으로 clean line을 evict하면 L2C에 알림
   else if (way != set_end && way->valid && !way->dirty && (NAME.find("L1") != std::string::npos)) {
     auto invalidator = channel_type::invalidator_for(way->address);
     invalidator(lower_level);
-    fmt::print("[L1_CLEAN_EVICT] Cycle: {} {} Addr: {:#x} Set: {} Way: {} -> sending putS to L2C\n",
-               current_time.time_since_epoch() / clock_period, NAME, way->address.to<uint64_t>(),
-               get_set_index(way->address), std::distance(set_begin, way));
+    // fmt::print("[L1_CLEAN_EVICT] Cycle: {} {} Addr: {:#x} Set: {} Way: {} -> sending putS to L2C\n",
+    //            current_time.time_since_epoch() / clock_period, NAME, way->address.to<uint64_t>(),
+    //            get_set_index(way->address), std::distance(set_begin, way));
   }
 
   champsim::address evicting_address{};
@@ -386,7 +388,7 @@ bool CACHE::handle_fill(const mshr_type& fill_mshr)
     // =================================================================
     // [XOR Cache Logic Start] 데이터가 캐시에 들어온 직후 실행
     // =================================================================
-    if(NAME == "LLC") {
+    if(NAME == "LLC" && XOR_CACHE_MODE) {
       long set_idx = get_set_index(fill_mshr.address);
       uint32_t flat_idx = set_idx * NUM_WAY + way_idx;
       
@@ -538,6 +540,13 @@ bool CACHE::try_hit(const tag_lookup_type& handle_pkt)
                current_time.time_since_epoch() / clock_period, handle_pkt.address.to<uint64_t>(),
                access_type_names.at(champsim::to_underlying(handle_pkt.type)), hit ? "HIT" : "MISS");
   }
+
+  if(!XOR_CACHE_MODE && cpu == 1 && (NAME == "LLC") && (handle_pkt.type == access_type::LOAD) && ((get_set_index(handle_pkt.address)==10) || (get_set_index(handle_pkt.address)==21))) {
+    fmt::print("[{}] {} cpu: {} instr_id: {} address: {} v_address: {} data: {} set: {} way: {} ({}) type: {} cycle: {}\n", NAME, __func__, cpu, handle_pkt.instr_id,
+               handle_pkt.address, handle_pkt.v_address, handle_pkt.data, get_set_index(handle_pkt.address), std::distance(set_begin, way),
+               hit ? "HIT" : "MISS", access_type_names.at(champsim::to_underlying(handle_pkt.type)), current_time.time_since_epoch() / clock_period);
+  }
+
   if (handle_pkt.data.to<uint64_t>() == 0x0000000000010000 || handle_pkt.data.to<uint64_t>() == 0x0000000001000000 || handle_pkt.data.to<uint64_t>() == 0x0000000100000000 || handle_pkt.data.to<uint64_t>() == 0x0000010000000000 || handle_pkt.data.to<uint64_t>() == 0x1111111111111111
       || handle_pkt.data_value == 0x0000000000010000 || handle_pkt.data_value == 0x0000000001000000 || handle_pkt.data_value == 0x0000000100000000 || handle_pkt.data_value == 0x0000010000000000 || handle_pkt.data_value == 0x1111111111111111
       || way->data_cache_line[0] == 0x0000000000010000 || way->data_cache_line[0] == 0x0000000001000000 || way->data_cache_line[0] == 0x0000000100000000 || way->data_cache_line[0] == 0x0000010000000000 || way->data_cache_line[0] == 0x1111111111111111) {
@@ -547,14 +556,6 @@ bool CACHE::try_hit(const tag_lookup_type& handle_pkt)
                     access_type_names.at(champsim::to_underlying(handle_pkt.type)),
                     way->data_cache_line[0], way->data_cache_line[1], way->data_cache_line[2], way->data_cache_line[3], way->data_cache_line[4], way->data_cache_line[5], way->data_cache_line[6], way->data_cache_line[7]);
   }
-
-  // if (handle_pkt.address.to<uint64_t>() == 0x1bd040 || handle_pkt.address.to<uint64_t>() == 0x1ad040 || handle_pkt.address.to<uint64_t>() == 0x1c5040 || handle_pkt.address.to<uint64_t>() == 0x1b5040) {
-  //       fmt::print("CPU{} {} Debug Try Hit with target data ({}) Cycle: {} Addr: {:#x} V_Addr: {:#x} Pkt Data: {:#x} Pkt Data_val: {:#x} Type: {} Data: [{:#x}, {:#x}, {:#x}, {:#x}, {:#x}, {:#x}, {:#x}, {:#x}]\n",
-  //                   cpu, NAME, hit ? "HIT" : "MISS", current_time.time_since_epoch() / clock_period,
-  //                   handle_pkt.address.to<uint64_t>(), handle_pkt.v_address.to<uint64_t>(), handle_pkt.data.to<uint64_t>(), handle_pkt.data_value, 
-  //                   access_type_names.at(champsim::to_underlying(handle_pkt.type)),
-  //                   way->data_cache_line[0], way->data_cache_line[1], way->data_cache_line[2], way->data_cache_line[3], way->data_cache_line[4], way->data_cache_line[5], way->data_cache_line[6], way->data_cache_line[7]);
-  // }
 
   if constexpr (champsim::debug_print) {
     fmt::print("[{}] {} instr_id: {} address: {} v_address: {} data: {} set: {} way: {} ({}) type: {} cycle: {}\n", NAME, __func__, handle_pkt.instr_id,
@@ -588,141 +589,143 @@ bool CACHE::try_hit(const tag_lookup_type& handle_pkt)
         directory[flat_idx].sharers[handle_pkt.cpu] = true;
       }
       
-      if(xor_metadata[flat_idx].is_xored) {
-        // fmt::print("hit on XORed\n");
-        // -----------------------------------------------------------
-        // 1. Direct Forwarding 확인 (Target: Requested Line B)
-        // -----------------------------------------------------------
-        bool is_direct_forwarding = false;
-        for(int i=0; i<NUM_CPUS; i++) {
-             if(i != handle_pkt.cpu && directory[flat_idx].sharers[i]) {
-                 is_direct_forwarding = true;
-                 break;
-             }
-        }
-
-        if (is_direct_forwarding) {
-            // [Case B] Direct Forwarding
-            fmt::print("[DIRECT_FORWARDING] Cycle: {} CPU: {} | ReqAddr: {:#x} ReqData: [{:#x}]\n", 
-                    current_time.time_since_epoch() / clock_period, handle_pkt.cpu,
-                    handle_pkt.address.to<uint64_t>(), way->data_cache_line[0]);
-            sim_stats.total_miss_latency_cycles += 21;
-            sim_stats.direct_forwardings++;
-            // fmt::print(" -> Direct Forwarding\n");
-        } 
-        else {
-            // -------------------------------------------------------
-            // 2. Recovery 수행 (Target: Partner Line A)
-            // -------------------------------------------------------
-            uint32_t p_set = xor_metadata[flat_idx].partner_set;
-            uint32_t p_way = xor_metadata[flat_idx].partner_way;
-            uint32_t p_flat_idx = p_set * NUM_WAY + p_way;
-
-            bool partner_is_local = directory[p_flat_idx].sharers[handle_pkt.cpu];
-            bool partner_is_remote = false;
-            
-            // 파트너 유효성 및 리모트 체크
-            if (p_flat_idx < directory.size()) { // Safety check
-                for(int i=0; i<NUM_CPUS; i++) {
-                    if(i != handle_pkt.cpu && directory[p_flat_idx].sharers[i]) {
-                        partner_is_remote = true;
-                        break;
-                    }
-                }
-            }
-
-            if(partner_is_local) {
-                // [Case A] Local Recovery
-                auto partner_it = std::next(std::begin(this->block), p_flat_idx);
-                fmt::print("[LOCAL_RECOVERY] Cycle: {} CPU: {} | ReqAddr: {:#x} ReqData: [{:#x}] | PartnerAddr: {:#x} PartnerData: [{:#x}] | PartnerSet: {} PartnerWay: {}\n", 
-                    current_time.time_since_epoch() / clock_period, handle_pkt.cpu,
-                    handle_pkt.address.to<uint64_t>(), way->data_cache_line[0],
-                    partner_it->address.to<uint64_t>(), partner_it->data_cache_line[0],
-                    p_set, p_way);
-                sim_stats.total_miss_latency_cycles += 8;
-                sim_stats.local_recoveries++;
-            }
-            else if(partner_is_remote) {
-                // [Case C] Remote Recovery
-                auto partner_it = std::next(std::begin(this->block), p_flat_idx);
-                fmt::print("[REMOTE_RECOVERY] Cycle: {} CPU: {} | ReqAddr: {:#x} ReqData: [{:#x}] | PartnerAddr: {:#x} PartnerData: [{:#x}] | PartnerSet: {} PartnerWay: {} | Partner in other core\n", 
-                    current_time.time_since_epoch() / clock_period, handle_pkt.cpu,
-                    handle_pkt.address.to<uint64_t>(), way->data_cache_line[0],
-                    partner_it->address.to<uint64_t>(), partner_it->data_cache_line[0],
-                    p_set, p_way);
-                sim_stats.total_miss_latency_cycles += 35;
-                sim_stats.remote_recoveries++;
-            }
-            else {
-                // [Warning Case] 둘 다 S0 상태 - 현재 요청자가 유일한 sharer가 됨
-                auto partner_it = std::next(std::begin(this->block), p_flat_idx);
-                fmt::print("[ERROR] Cycle: {} CPU: {} | ReqAddr: {:#x} Reqset: {} Reqway: {} | PartnerAddr: {:#x} Partnerset {} Partnerway {} | Both S0 state\n",
-                    current_time.time_since_epoch() / clock_period, handle_pkt.cpu,
-                    handle_pkt.address.to<uint64_t>(), set_idx, way_idx, partner_it->address.to<uint64_t>(), p_set, p_way);
-                sim_stats.total_miss_latency_cycles += 8;
-                sim_stats.local_recoveries++;
-            }
-        }
-        // -----------------------------------------------------------
-        // 3. UnXORing (Write 시)
-        // -----------------------------------------------------------
-        if (handle_pkt.type == access_type::WRITE || handle_pkt.type == access_type::RFO) {
-          fmt::print("[UNXOR_getM] Cycle: {} CPU: {} Addr: {:#x} Data: [{:#x}] | Set: {} Way: {} | handle_hit WRITE/RFO\n", 
-                    current_time.time_since_epoch() / clock_period, handle_pkt.cpu,
-                    handle_pkt.address.to<uint64_t>(), way->data_cache_line[0],
-                    set_idx, way_idx);
-          break_xor_relationship((uint32_t)set_idx, (uint32_t)way_idx);
-        }
-      } else { // not XORed
-        if(handle_pkt.type != access_type::WRITE && handle_pkt.type != access_type::RFO) {
-        if(map_table[map_idx].valid) {
-          if(map_table[map_idx].set_index != set_idx || map_table[map_idx].way_index != way_idx) {
-            uint32_t p_set = map_table[map_idx].set_index;
-            uint32_t p_way = map_table[map_idx].way_index;
-            uint32_t p_flat_idx = p_set * NUM_WAY + p_way;
-            auto partner_block_it = std::next(std::begin(this->block), p_flat_idx);
-
-            directory[flat_idx].exclusive_owner = -1;
-
-            // Minimum Sharer Invariant: at least one line must have an upper-cache sharer
-            // If both would be S0, don't form the pair — just register in map table
-            if (is_line_s0(flat_idx) && is_line_s0(p_flat_idx)) {
-              // Both S0: don't form pair; keep map table pointing to partner
-              // so a future S line can pair with it
-              fmt::print("[XOR_SKIP_BY_TRY_HIT] Cycle: {} CPU: {} | Addr: {:#x} | Both S0, skipping XOR pair\n",
-                  current_time.time_since_epoch() / clock_period, handle_pkt.cpu,
-                  handle_pkt.address.to<uint64_t>());
-            } else {
-              xor_metadata[flat_idx] = {true, p_set, p_way};
-              xor_metadata[p_flat_idx] = {true, (uint32_t)set_idx, (uint32_t)way_idx};
-              map_table[map_idx].valid = false;
-              const char* partner_state = is_line_s0(p_flat_idx) ? "S0" : "S";
-              const char* new_state = is_line_s0(flat_idx) ? "S0" : "S";
-              fmt::print("[XOR_SUCCESS_BY_TRY_HIT] Cycle: {} CPU: {} | NewAddr: {:#x} NewData: [{:#x}, {:#x}, {:#x}, {:#x}, {:#x}, {:#x}, {:#x}, {:#x}] ({}) | PartnerAddr: {:#x} PartnerData: [{:#x}, {:#x}, {:#x}, {:#x}, {:#x}, {:#x}, {:#x}, {:#x}] ({}) | Pair: {}+{} | Hash: {} | Set: {} Way: {} <-> Set: {} Way: {}\n", 
-                  current_time.time_since_epoch() / clock_period,
-                  handle_pkt.cpu,
-                  handle_pkt.address.to<uint64_t>(), 
-                  way->data_cache_line[0], way->data_cache_line[1], way->data_cache_line[2], way->data_cache_line[3], way->data_cache_line[4], way->data_cache_line[5], way->data_cache_line[6], way->data_cache_line[7],
-                  new_state,
-                  partner_block_it->address.to<uint64_t>(),
-                  partner_block_it->data_cache_line[0], partner_block_it->data_cache_line[1], partner_block_it->data_cache_line[2], partner_block_it->data_cache_line[3], partner_block_it->data_cache_line[4], partner_block_it->data_cache_line[5], partner_block_it->data_cache_line[6], partner_block_it->data_cache_line[7],
-                  partner_state,
-                  new_state, partner_state,
-                  map_idx,
-                  set_idx, way_idx,
-                  p_set, p_way);
-            }
+      if(XOR_CACHE_MODE) {
+        if(xor_metadata[flat_idx].is_xored) {
+          // fmt::print("hit on XORed\n");
+          // -----------------------------------------------------------
+          // 1. Direct Forwarding 확인 (Target: Requested Line B)
+          // -----------------------------------------------------------
+          bool is_direct_forwarding = false;
+          for(int i=0; i<NUM_CPUS; i++) {
+              if(i != handle_pkt.cpu && directory[flat_idx].sharers[i]) {
+                  is_direct_forwarding = true;
+                  break;
+              }
           }
-        } else {
-          // No valid map entry: insert into map table for potential future XOR pairing
-          fmt::print("[XOR_MAPTABLE_INSERT_BY_TRY_HIT] Cycle: {} CPU: {} | Addr: {:#x} Hash: {} Data: [{:#x}, {:#x}, {:#x}, {:#x}, {:#x}, {:#x}, {:#x}, {:#x}] | Inserted into MapTable\n", 
-                  current_time.time_since_epoch() / clock_period, handle_pkt.cpu,
-                  handle_pkt.address.to<uint64_t>(), 
-                  map_idx,
-                  way->data_cache_line[0], way->data_cache_line[1], way->data_cache_line[2], way->data_cache_line[3], way->data_cache_line[4], way->data_cache_line[5], way->data_cache_line[6], way->data_cache_line[7]);
-          map_table[map_idx] = {true, (uint32_t)set_idx, (uint32_t)way_idx};
+
+          if (is_direct_forwarding) {
+              // [Case B] Direct Forwarding
+              fmt::print("[DIRECT_FORWARDING] Cycle: {} CPU: {} | ReqAddr: {:#x} ReqData: [{:#x}]\n", 
+                      current_time.time_since_epoch() / clock_period, handle_pkt.cpu,
+                      handle_pkt.address.to<uint64_t>(), way->data_cache_line[0]);
+              sim_stats.total_miss_latency_cycles += 21;
+              sim_stats.direct_forwardings++;
+              // fmt::print(" -> Direct Forwarding\n");
+          } 
+          else {
+              // -------------------------------------------------------
+              // 2. Recovery 수행 (Target: Partner Line A)
+              // -------------------------------------------------------
+              uint32_t p_set = xor_metadata[flat_idx].partner_set;
+              uint32_t p_way = xor_metadata[flat_idx].partner_way;
+              uint32_t p_flat_idx = p_set * NUM_WAY + p_way;
+
+              bool partner_is_local = directory[p_flat_idx].sharers[handle_pkt.cpu];
+              bool partner_is_remote = false;
+              
+              // 파트너 유효성 및 리모트 체크
+              if (p_flat_idx < directory.size()) { // Safety check
+                  for(int i=0; i<NUM_CPUS; i++) {
+                      if(i != handle_pkt.cpu && directory[p_flat_idx].sharers[i]) {
+                          partner_is_remote = true;
+                          break;
+                      }
+                  }
+              }
+
+              if(partner_is_local) {
+                  // [Case A] Local Recovery
+                  auto partner_it = std::next(std::begin(this->block), p_flat_idx);
+                  fmt::print("[LOCAL_RECOVERY] Cycle: {} CPU: {} | ReqAddr: {:#x} ReqData: [{:#x}] | PartnerAddr: {:#x} PartnerData: [{:#x}] | PartnerSet: {} PartnerWay: {}\n", 
+                      current_time.time_since_epoch() / clock_period, handle_pkt.cpu,
+                      handle_pkt.address.to<uint64_t>(), way->data_cache_line[0],
+                      partner_it->address.to<uint64_t>(), partner_it->data_cache_line[0],
+                      p_set, p_way);
+                  sim_stats.total_miss_latency_cycles += 8;
+                  sim_stats.local_recoveries++;
+              }
+              else if(partner_is_remote) {
+                  // [Case C] Remote Recovery
+                  auto partner_it = std::next(std::begin(this->block), p_flat_idx);
+                  fmt::print("[REMOTE_RECOVERY] Cycle: {} CPU: {} | ReqAddr: {:#x} ReqData: [{:#x}] | PartnerAddr: {:#x} PartnerData: [{:#x}] | PartnerSet: {} PartnerWay: {} | Partner in other core\n", 
+                      current_time.time_since_epoch() / clock_period, handle_pkt.cpu,
+                      handle_pkt.address.to<uint64_t>(), way->data_cache_line[0],
+                      partner_it->address.to<uint64_t>(), partner_it->data_cache_line[0],
+                      p_set, p_way);
+                  sim_stats.total_miss_latency_cycles += 35;
+                  sim_stats.remote_recoveries++;
+              }
+              else {
+                  // [Warning Case] 둘 다 S0 상태 - 현재 요청자가 유일한 sharer가 됨
+                  auto partner_it = std::next(std::begin(this->block), p_flat_idx);
+                  fmt::print("[ERROR] Cycle: {} CPU: {} | ReqAddr: {:#x} Reqset: {} Reqway: {} | PartnerAddr: {:#x} Partnerset {} Partnerway {} | Both S0 state\n",
+                      current_time.time_since_epoch() / clock_period, handle_pkt.cpu,
+                      handle_pkt.address.to<uint64_t>(), set_idx, way_idx, partner_it->address.to<uint64_t>(), p_set, p_way);
+                  sim_stats.total_miss_latency_cycles += 8;
+                  sim_stats.local_recoveries++;
+              }
+          }
+          // -----------------------------------------------------------
+          // 3. UnXORing (Write 시)
+          // -----------------------------------------------------------
+          if (handle_pkt.type == access_type::WRITE || handle_pkt.type == access_type::RFO) {
+            fmt::print("[UNXOR_getM] Cycle: {} CPU: {} Addr: {:#x} Data: [{:#x}] | Set: {} Way: {} | handle_hit WRITE/RFO\n", 
+                      current_time.time_since_epoch() / clock_period, handle_pkt.cpu,
+                      handle_pkt.address.to<uint64_t>(), way->data_cache_line[0],
+                      set_idx, way_idx);
+            break_xor_relationship((uint32_t)set_idx, (uint32_t)way_idx);
+          }
+        } else { // not XORed
+          if(handle_pkt.type != access_type::WRITE && handle_pkt.type != access_type::RFO) {
+          if(map_table[map_idx].valid) {
+            if(map_table[map_idx].set_index != set_idx || map_table[map_idx].way_index != way_idx) {
+              uint32_t p_set = map_table[map_idx].set_index;
+              uint32_t p_way = map_table[map_idx].way_index;
+              uint32_t p_flat_idx = p_set * NUM_WAY + p_way;
+              auto partner_block_it = std::next(std::begin(this->block), p_flat_idx);
+
+              directory[flat_idx].exclusive_owner = -1;
+
+              // Minimum Sharer Invariant: at least one line must have an upper-cache sharer
+              // If both would be S0, don't form the pair — just register in map table
+              if (is_line_s0(flat_idx) && is_line_s0(p_flat_idx)) {
+                // Both S0: don't form pair; keep map table pointing to partner
+                // so a future S line can pair with it
+                fmt::print("[XOR_SKIP_BY_TRY_HIT] Cycle: {} CPU: {} | Addr: {:#x} | Both S0, skipping XOR pair\n",
+                    current_time.time_since_epoch() / clock_period, handle_pkt.cpu,
+                    handle_pkt.address.to<uint64_t>());
+              } else {
+                xor_metadata[flat_idx] = {true, p_set, p_way};
+                xor_metadata[p_flat_idx] = {true, (uint32_t)set_idx, (uint32_t)way_idx};
+                map_table[map_idx].valid = false;
+                const char* partner_state = is_line_s0(p_flat_idx) ? "S0" : "S";
+                const char* new_state = is_line_s0(flat_idx) ? "S0" : "S";
+                fmt::print("[XOR_SUCCESS_BY_TRY_HIT] Cycle: {} CPU: {} | NewAddr: {:#x} NewData: [{:#x}, {:#x}, {:#x}, {:#x}, {:#x}, {:#x}, {:#x}, {:#x}] ({}) | PartnerAddr: {:#x} PartnerData: [{:#x}, {:#x}, {:#x}, {:#x}, {:#x}, {:#x}, {:#x}, {:#x}] ({}) | Pair: {}+{} | Hash: {} | Set: {} Way: {} <-> Set: {} Way: {}\n", 
+                    current_time.time_since_epoch() / clock_period,
+                    handle_pkt.cpu,
+                    handle_pkt.address.to<uint64_t>(), 
+                    way->data_cache_line[0], way->data_cache_line[1], way->data_cache_line[2], way->data_cache_line[3], way->data_cache_line[4], way->data_cache_line[5], way->data_cache_line[6], way->data_cache_line[7],
+                    new_state,
+                    partner_block_it->address.to<uint64_t>(),
+                    partner_block_it->data_cache_line[0], partner_block_it->data_cache_line[1], partner_block_it->data_cache_line[2], partner_block_it->data_cache_line[3], partner_block_it->data_cache_line[4], partner_block_it->data_cache_line[5], partner_block_it->data_cache_line[6], partner_block_it->data_cache_line[7],
+                    partner_state,
+                    new_state, partner_state,
+                    map_idx,
+                    set_idx, way_idx,
+                    p_set, p_way);
+              }
+            }
+          } else {
+            // No valid map entry: insert into map table for potential future XOR pairing
+            fmt::print("[XOR_MAPTABLE_INSERT_BY_TRY_HIT] Cycle: {} CPU: {} | Addr: {:#x} Hash: {} Data: [{:#x}, {:#x}, {:#x}, {:#x}, {:#x}, {:#x}, {:#x}, {:#x}] | Inserted into MapTable\n", 
+                    current_time.time_since_epoch() / clock_period, handle_pkt.cpu,
+                    handle_pkt.address.to<uint64_t>(), 
+                    map_idx,
+                    way->data_cache_line[0], way->data_cache_line[1], way->data_cache_line[2], way->data_cache_line[3], way->data_cache_line[4], way->data_cache_line[5], way->data_cache_line[6], way->data_cache_line[7]);
+            map_table[map_idx] = {true, (uint32_t)set_idx, (uint32_t)way_idx};
+          }
         }
-      }
+        }
       }
     }
 
@@ -754,7 +757,7 @@ bool CACHE::try_hit(const tag_lookup_type& handle_pkt)
     // [XOR Cache] L1D/L2C write hit → LLC getM 알림
     // 주의: add_wq()는 응답을 기대하므로 MSHR 문제 발생
     // 해결: write_hit_notify_queue 사용 (응답 없음, getM 전용)
-    if ((handle_pkt.type == access_type::WRITE || handle_pkt.type == access_type::RFO) 
+    if (XOR_CACHE_MODE && (handle_pkt.type == access_type::WRITE || handle_pkt.type == access_type::RFO)
         && !way->dirty  // S→M 전환 시에만
         && (NAME == "cpu0_L1D" || NAME == "cpu0_L2C" || NAME == "cpu1_L1D" || NAME == "cpu1_L2C")) {
       fmt::print("[{}_WRITE_HIT] Cycle: {} Addr: {:#x} OldData: [{:#x}] NewVal: {:#x} -> S->M transition (getM to LLC)\n",
@@ -940,8 +943,8 @@ long CACHE::operate()
   // if(NAME == "cpu0_L1D" || NAME == "cpu0_L2C" || NAME == "LLC") {
 
 
-  if(NAME == "LLC") {
-    std::vector<long> sets_to_check = {};
+  if(llc_print_status && NAME == "LLC" && cpu == 1 && !XOR_CACHE_MODE) {
+    std::vector<long> sets_to_check = {10, 21};
     for (long set_idx : sets_to_check) {
         fmt::print("===== CPU{} {} Cache Set {} Status at Cycle {} =====\n", cpu, NAME, set_idx, current_time.time_since_epoch() / clock_period);
         auto set_begin = std::next(std::begin(this->block), set_idx * this->NUM_WAY);
@@ -969,6 +972,7 @@ long CACHE::operate()
         way++;
       }
     }
+    llc_print_status = false;
   }
 
   long progress{0};
@@ -1011,9 +1015,9 @@ long CACHE::operate()
           long way_idx = std::distance(begin, inv_way);
           uint32_t flat_idx = set_idx * NUM_WAY + way_idx;
           l2c_upper_present[flat_idx] = false;
-          fmt::print("[L2C_RECV_L1_PUTS] Cycle: {} Addr: {:#x} Set: {} Way: {} -> L1 clean eviction, cleared upper_present\n",
-                     current_time.time_since_epoch() / clock_period, inv.address.to<uint64_t>(),
-                     set_idx, way_idx);
+          // fmt::print("[L2C_RECV_L1_PUTS] Cycle: {} Addr: {:#x} Set: {} Way: {} -> L1 clean eviction, cleared upper_present\n",
+          //            current_time.time_since_epoch() / clock_period, inv.address.to<uint64_t>(),
+          //            set_idx, way_idx);
         }
       }
       ul->invalidation_queue.clear();
@@ -1039,15 +1043,17 @@ long CACHE::operate()
       ul->invalidation_queue.clear();
       
       // [XOR Cache] L2C로부터 온 getM (write hit) 알림 처리
-      for (const auto& notify : ul->write_hit_notify_queue) {
-        this->handle_getM(notify.address, notify.cpu_id);
+      if(XOR_CACHE_MODE) {
+        for (const auto& notify : ul->write_hit_notify_queue) {
+          this->handle_getM(notify.address, notify.cpu_id);
+        }
+        ul->write_hit_notify_queue.clear();
       }
-      ul->write_hit_notify_queue.clear();
     }
   }
   
   // [XOR Cache] L2C에서 L1D로부터 온 getM 알림을 LLC로 전달
-  if (NAME == "cpu0_L2C" || NAME == "cpu1_L2C") {
+  if (XOR_CACHE_MODE && (NAME == "cpu0_L2C" || NAME == "cpu1_L2C")) {
     for (auto* ul : upper_levels) {
       for (const auto& notify : ul->write_hit_notify_queue) {
         // L1D의 알림을 LLC로 전달
@@ -1554,9 +1560,9 @@ long CACHE::invalidate_entry(champsim::address inval_addr, uint32_t source_cpu)
       long way_idx = std::distance(begin, inv_way);
       uint32_t flat_idx = set_idx * NUM_WAY + way_idx;
       
-      fmt::print("[LLC_PUTS_RECEIVED] Cycle: {} Addr: {:#x} Set: {} Way: {} flat_idx: {} source_cpu: {}\n",
-                 current_time.time_since_epoch() / clock_period, inval_addr.to<uint64_t>(),
-                 set_idx, way_idx, flat_idx, source_cpu);
+      // fmt::print("[LLC_PUTS_RECEIVED] Cycle: {} Addr: {:#x} Set: {} Way: {} flat_idx: {} source_cpu: {}\n",
+      //            current_time.time_since_epoch() / clock_period, inval_addr.to<uint64_t>(),
+      //            set_idx, way_idx, flat_idx, source_cpu);
       
       // [Per-CPU sharer removal] source_cpu가 지정된 경우 해당 CPU만 제거
       // source_cpu가 max인 경우 (일반 invalidation) 모든 sharer 제거
@@ -1591,45 +1597,48 @@ long CACHE::invalidate_entry(champsim::address inval_addr, uint32_t source_cpu)
         }
       }
       
-      fmt::print("[LLC_PUTS_DEBUG] had_sharers: {} is_xored: {}\n", had_sharers, xor_metadata[flat_idx].is_xored);
-      
+      if(XOR_CACHE_MODE) {
+        fmt::print("[LLC_PUTS_DEBUG] had_sharers: {} is_xored: {}\n", had_sharers, xor_metadata[flat_idx].is_xored);
+      }
+
       // XORed 라인인 경우 Minimum Sharer Invariant 체크
-      if (xor_metadata[flat_idx].is_xored && had_sharers) {
-        uint32_t p_set = xor_metadata[flat_idx].partner_set;
-        uint32_t p_way = xor_metadata[flat_idx].partner_way;
-        uint32_t p_flat_idx = p_set * NUM_WAY + p_way;
-        
-        // 현재 라인의 sharer 확인
-        bool current_has_sharer = false;
-        for (size_t i = 0; i < directory[flat_idx].sharers.size(); ++i) {
-          if (directory[flat_idx].sharers[i]) {
-            current_has_sharer = true;
-            break;
-          }
-        }
-        
-        // 파트너 라인의 sharer 확인
-        bool partner_has_sharer = false;
-        if (p_flat_idx < directory.size()) {
-          for (size_t i = 0; i < directory[p_flat_idx].sharers.size(); ++i) {
-            if (directory[p_flat_idx].sharers[i]) {
-              partner_has_sharer = true;
+      if(XOR_CACHE_MODE) {
+        if (xor_metadata[flat_idx].is_xored && had_sharers) {
+          uint32_t p_set = xor_metadata[flat_idx].partner_set;
+          uint32_t p_way = xor_metadata[flat_idx].partner_way;
+          uint32_t p_flat_idx = p_set * NUM_WAY + p_way;
+          
+          // 현재 라인의 sharer 확인
+          bool current_has_sharer = false;
+          for (size_t i = 0; i < directory[flat_idx].sharers.size(); ++i) {
+            if (directory[flat_idx].sharers[i]) {
+              current_has_sharer = true;
               break;
             }
           }
-        }
-        
-        fmt::print("[LLC_PUTS_DEBUG] Partner: Set {} Way {} | current_has_sharer: {} partner_has_sharer: {}\n",
-                   p_set, p_way, current_has_sharer, partner_has_sharer);
-        
-        // 둘 다 sharer가 없으면 (S0, S0) → unXOR 필요!
-        if (!current_has_sharer && !partner_has_sharer) {
-          fmt::print("[UNXOR_lastPutS] Cycle: {} Addr: {:#x} | Both lines S0 (no sharers) -> unXORing\n",
-                     current_time.time_since_epoch() / clock_period, inval_addr.to<uint64_t>());
-          break_xor_relationship((uint32_t)set_idx, (uint32_t)way_idx);
+          
+          // 파트너 라인의 sharer 확인
+          bool partner_has_sharer = false;
+          if (p_flat_idx < directory.size()) {
+            for (size_t i = 0; i < directory[p_flat_idx].sharers.size(); ++i) {
+              if (directory[p_flat_idx].sharers[i]) {
+                partner_has_sharer = true;
+                break;
+              }
+            }
+          }
+          
+          fmt::print("[LLC_PUTS_DEBUG] Partner: Set {} Way {} | current_has_sharer: {} partner_has_sharer: {}\n",
+                    p_set, p_way, current_has_sharer, partner_has_sharer);
+          
+          // 둘 다 sharer가 없으면 (S0, S0) → unXOR 필요!
+          if (!current_has_sharer && !partner_has_sharer) {
+            fmt::print("[UNXOR_lastPutS] Cycle: {} Addr: {:#x} | Both lines S0 (no sharers) -> unXORing\n",
+                      current_time.time_since_epoch() / clock_period, inval_addr.to<uint64_t>());
+            break_xor_relationship((uint32_t)set_idx, (uint32_t)way_idx);
+          }
         }
       }
-      
       // LLC에서는 블록 자체는 유효하게 유지 (S0 상태)
       return std::distance(begin, inv_way);
     }

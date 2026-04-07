@@ -1,5 +1,5 @@
 {
-  "executable_name": "test",
+  "executable_name": "non_xor",
   "block_size": 64,
   "page_size": 131072,
   "heartbeat_frequency": 10000000,
